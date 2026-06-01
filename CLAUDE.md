@@ -42,6 +42,7 @@ This is a private single-user system. It is not a SaaS product. There is no auth
 
 **Active phase:** Phase 0a — Minimum to run hello-world crew  
 **Currently building:** Folder structure, env setup, hello-world CrewAI crew, `human_gate.py` smoke test  
+**Step 5 done (2026-06-02):** `backend/main.py` FastAPI stub with `/health` + env_validator on startup, `backend/utils/logger.py` shared logger, fastapi/uvicorn pinned. Smoke-tested — server starts, `/health` returns 200. Follow-up flags in `backend/output/followups_2026-06-02.md` (gitignored, working-tree only).  
 **Next sub-phase:** Phase 0b — Workflow 2 prep (install firecrawl-py, praw, pytrends, playwright, store scrapers)  
 **Next phase:** Phase 1 — Workflow 2 (Research → PRD)
 
