@@ -125,26 +125,38 @@ User (voice / text / frontend)
          ↓
     FastAPI (main.py)
          ↓
-    CrewAI Orchestrator
-    ┌────────────────────────────────┐
-    │  Manager Agent (DeepSeek)      │
-    │    ↓ delegates to              │
-    │  Specialist Agents             │
-    │  (Research / Content /         │
-    │   Design / Social)             │
-    └────────────────────────────────┘
-         ↓                    ↓
-    Tools Layer          Memory Layer
-    (Firecrawl,          (ChromaDB +
-     PRAW, Serper,        Obsidian)
-     Skyvern, etc.)
+    Jarvis CEO  (Python orchestrator — backend/crews/jarvis_ceo.py)
+    │  No LLM call. Pure Python routing. Decides which dept_crews
+    │  to activate, in what order, threads outputs as inputs.
+    ↓
+    ┌────────────── Per-department sub-crews (one CrewAI Crew per dept) ─────────────┐
+    │  research_dept_crew   (Process.hierarchical, manager_agent: research_director)   │
+    │  product_dept_crew    (Process.hierarchical, manager_agent: product_director)    │
+    │  content_dept_crew    (Process.hierarchical, manager_agent: content_director)    │
+    │  design_dept_crew     (Process.hierarchical, manager_agent: design_director)     │
+    │  intelligence_dept_crew (Process.hierarchical, manager_agent: intelligence_director) │
+    │  automation_dept_crew (Process.hierarchical, manager_agent: automation_director) │
+    │                                                                                  │
+    │  Each crew: memory=False (per ADR-0002). Specialist agents never call across    │
+    │  depts — the CEO threads the output of one dept into the next dept's input.    │
+    └──────────────────────────────────────────────────────────────────────────────────┘
+         ↓                                            ↓
+    Tools Layer                                   Memory Layer
+    (Firecrawl, PRAW, Serper,                      (Obsidian vault — single
+     store scrapers, pytrends,                      long-term layer. ChromaDB
+     Skyvern, Claude Vision)                        disabled in dept_crews by
+                                                   default per ADR-0002)
          ↓
-    Output Layer
-    (PRDs, briefs,
-     reports, logs)
+    Output Layer (PRDs, briefs, reports, logs)
          ↓
     Frontend Dashboard (Next.js)
 ```
+
+> Per ADR-0000 Q2 and ADR-0002: the CEO is **plain Python**, not a CrewAI agent.
+> CrewAI's `Process.hierarchical` is natively 2-level (manager + workers); a Python
+> CEO on top of per-department sub-crews gives the 3-level hierarchy this PRD
+> describes, while keeping the "specialists never cross departments" rule
+> mechanically enforceable.
 
 ---
 
@@ -225,12 +237,11 @@ Pipeline:
 ## 9. Memory System
 
 ### ChromaDB (Short-term)
-- Automatically managed by CrewAI
-- Stores: task context, research within a session, agent outputs
-- Query: semantic similarity search
-- Resets: configurable per crew
+- **Status:** Built into CrewAI, but **disabled by default** in all `dept_crews` (per ADR-0002). `Crew(...)` calls in `backend/crews/dept_crews.py` are constructed with no `memory` argument — CrewAI's default is `False`. All agents in `agents.yaml` are also `memory: false`. Belt-and-braces; either alone suffices in current CrewAI.
+- **Why disabled:** Inter-agent state flows through explicit task `context:`. ChromaDB inside a crew has no concrete consumer left, and removing it eliminates the cross-run contamination failure mode (run 2 of "to-do app" semantic-retrieving fragments from run 1 of "habit tracker") by construction.
+- **Reserved upgrade path:** If a future workflow develops a concrete in-dept semantic-recall need, the upgrade is an ephemeral (RAM-only) ChromaDB client per `Crew` instance — leaves no on-disk state to leak between runs. See ADR-0002 for the full policy.
 
-### Obsidian Vault (Long-term)
+### Obsidian Vault (Long-term — active memory layer)
 - Stored as Markdown files with bidirectional links
 - Written to by: `obsidian_sync.py` after every significant workflow completion
 - Stores: PRDs, market research summaries, competitor notes, user preferences, past decisions
@@ -251,11 +262,15 @@ Pipeline:
 
 ## 11. Cost Guardrails
 
-| Guard | Behaviour |
-|-------|-----------|
-| Per-run token limit | Each crew has a max token budget. Exceeding it cancels the run and logs a warning. |
-| Daily spend cap | Total daily API spend tracked. Alert sent via ntfy.sh if exceeded. |
-| Model fallback | If DeepSeek is slow or unavailable, falls back to MiniMax M2.7 automatically. |
+> Per ADR-0001 Q14: `backend/utils/cost_guard.py` ships in Phase 1 with a minimal viable implementation. The full automatic-fallback + daily-cap table is deferred to Phase 7 (per "manual before automated" principle).
+
+| Guard | Behaviour | When |
+|-------|-----------|------|
+| Per-run token limit | Hard cap of 200,000 tokens per crew run. Exceeding raises `BudgetExceeded`, which the CEO orchestrator catches, sets run status to `failed`, and writes `backend/output/cost_exceeded_{run_id}.txt`. | Phase 1 |
+| Daily spend cap | Total daily API spend tracked. Alert sent via ntfy.sh if exceeded. | Phase 7 |
+| Model fallback | If DeepSeek is slow or unavailable, falls back to MiniMax M2.7 automatically. | Phase 7 |
+
+**Phase 1 cost_guard.py API:** `start_run(run_id, max_tokens)`, `log_call(run_id, model, in_tok, out_tok)` (hooked into CrewAI `step_callback` / `task_callback`), `end_run(run_id)`, `check_budget(run_id)`. Hardcoded $/token table per model.
 
 Target: under ₹2,000/month total API cost.
 
@@ -297,10 +312,10 @@ PORCUPINE_ACCESS_KEY=      # Wake word detection
 
 ---
 
-## 14. What Is Explicitly Out of Scope (Phase 1–3)
+## 14. What Is Explicitly Out of Scope (Phase 1–6)
 
-- Docker / containerisation (added in Phase 4)
-- Scheduled / automated triggers (added in Phase 4)
+- Docker / containerisation (added in Phase 7, per ADR-0003 split)
+- Scheduled / automated triggers (added in Phase 7)
 - Telegram interface (future)
 - Multi-user support (never)
 - Mobile app for Jarvis (future)

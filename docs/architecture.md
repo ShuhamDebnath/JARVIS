@@ -349,17 +349,16 @@ jarvis/
 ├── backend/
 │   ├── crews/
 │   │   ├── jarvis_ceo.py          # Python orchestrator over all workflows
-│   │   ├── dept_crews.py          # build_research_dept_crew() + build_product_dept_crew() etc.
-│   │   ├── research_crew.py       # Workflow 2 — Research + PRD
-│   │   ├── content_crew.py        # Workflow 6 — Content pipeline
-│   │   ├── design_crew.py         # Workflow 1 — UI validation
-│   │   └── social_crew.py         # Workflow 3 + 4 — Social + App Store
+│   │   └── dept_crews.py          # build_<dept>_dept_crew() factory per department
 │   ├── orchestrator/
 │   │   └── human_gate.py          # ask_user / receive_user_reply handshake
 │   ├── state/                     # JSON-file run state (gitignored)
 │   ├── config/
 │   │   ├── agents.yaml            # All agent definitions
 │   │   └── tasks.yaml             # All task definitions
+│   ├── contracts/                 # Pydantic v2 output contracts per workflow
+│   │   ├── __init__.py
+│   │   └── research.py            # ResearchInterpretation (per ADR-0002)
 │   ├── tools/
 │   │   ├── store_scraper.py       # App Store + Play Store
 │   │   ├── firecrawl_tool.py      # Web scraper
