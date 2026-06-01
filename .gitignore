@@ -18,7 +18,7 @@ Python Environment
 venv/
 .venv/
 env/
-pycache/
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -40,6 +40,8 @@ backend/output/*
 
 backend/upload/*
 !backend/upload/.keep
+
+backend/state/runs.json   # JSON-file run state — changes every workflow run
 
 ChromaDB Vector Database
 
@@ -86,3 +88,4 @@ OS Generated Files
 .Trashes
 ehthumbs.db
 Thumbs.db.idea/
+.idea

@@ -40,8 +40,9 @@ This is a private single-user system. It is not a SaaS product. There is no auth
 
 > **Update this section every time a phase completes.**
 
-**Active phase:** Phase 0 — Project Setup & Environment  
-**Currently building:** Folder structure, environment setup, hello-world CrewAI crew  
+**Active phase:** Phase 0a — Minimum to run hello-world crew  
+**Currently building:** Folder structure, env setup, hello-world CrewAI crew, `human_gate.py` smoke test  
+**Next sub-phase:** Phase 0b — Workflow 2 prep (install firecrawl-py, praw, pytrends, playwright, store scrapers)  
 **Next phase:** Phase 1 — Workflow 2 (Research → PRD)
 
 Refer to `docs/roadmap.md` for the full phase breakdown and completion checklist.
@@ -82,6 +83,8 @@ Full reasoning for every decision is in `docs/architecture.md`.
 jarvis/
 ├── backend/
 │   ├── crews/          # One file per workflow crew
+│   ├── orchestrator/   # jarvis_ceo.py + human_gate.py (Python CEO layer)
+│   ├── state/          # JSON-file run state (gitignored except .gitkeep)
 │   ├── config/         # agents.yaml and tasks.yaml ONLY
 │   ├── tools/          # Reusable tool wrappers
 │   ├── voice/          # Voice layer (Phase 5)
@@ -137,6 +140,7 @@ Level 3 — Specialist Agents  (do the actual work, use tools, report to their h
 - Specialists do not communicate across departments — cross-department output flows via CEO
 - Engineering is outside Jarvis — no coding agents inside CrewAI; Claude Code handles all code tasks
 - Adding a new specialist touches exactly 2 config files — `agents.yaml` and `tasks.yaml` — nothing else
+- **Exception (ADR-0002, grilling session 3, 2026-06-01):** A task with `output_pydantic` (i.e., a strict-JSON contract) touches a 3rd file — `backend/contracts/<workflow>.py` — for the Pydantic model class. The agent + task YAML files are still the only files that define *behaviour*; the contract file defines *shape*.
 
 The six departments:
 | Department | What it owns |
