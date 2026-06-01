@@ -41,7 +41,7 @@ Why CrewAI won over alternatives:
 - `agents.yaml` — defines every agent (role, goal, backstory, LLM, tools)
 - `tasks.yaml` — defines every task (description, expected output, assigned agent)
 - `Crew(process=Process.hierarchical)` — manager agent delegates to specialist agents
-- `memory=True` — ChromaDB auto-handles short-term memory per crew
+- `memory` is **omitted** from every `Crew(...)` call in `dept_crews.py` — CrewAI's default is `memory=False`, so no `memory` argument means no ChromaDB inside the crew. All agents in all depts also have `memory: false` in `agents.yaml` (the two settings are belt-and-braces; either alone suffices in current CrewAI). Inter-agent state is threaded explicitly via task `context:`.
 
 ---
 
@@ -49,59 +49,94 @@ Why CrewAI won over alternatives:
 
 Jarvis uses a three-level hierarchy. You always talk to Jarvis (CEO). Jarvis routes internally. You never address individual agents directly.
 
+**Important — the CEO is a Python orchestrator, not a CrewAI agent.** CrewAI's `Process.hierarchical` is a two-level construct: a single `manager_agent` plus a pool of workers. There is no native 3-level delegation tree. To enforce the three-level rule from the docs, the CEO is implemented as a **Python function** in `backend/crews/jarvis_ceo.py` that calls **per-department sub-crews** (one CrewAI `Crew` per department, each with `Process.hierarchical`) and threads their outputs into the next department's input. The 3-level diagram is therefore real, but only the bottom two levels are CrewAI crews — the top level is plain Python.
+
 ```
-JARVIS (CEO Agent)
+JARVIS CEO  (Python orchestrator — backend/crews/jarvis_ceo.py)
 │   Role: Receives all user input, decides which departments to activate,
-│         synthesises all department outputs into a final response.
-│   LLM:  DeepSeek
-│   Rule: Never does research or writing itself — only delegates and synthesises.
+│         calls each department's crew in sequence or parallel,
+│         threads outputs into the next department's input.
+│   Rule: Never does research or writing itself — only orchestrates Python
+│         calls to per-department crews. No LLM call at the CEO level.
 │
-├── Research Director
-│   │   Role: Orchestrates all market research tasks
-│   │   LLM:  DeepSeek
+├── research_dept_crew  (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: research_director  (LLM: DeepSeek)
 │   ├── Pain Point Hunter        — Reddit, ProductHunt, 1-star App Store reviews
 │   ├── Competitor Mapper        — existing apps, ratings, download estimates
 │   ├── Revenue Estimator        — pricing models, MRR estimates, App Store charts
 │   ├── Gap Finder               — missing features across all competitor reviews
 │   ├── Trend Validator          — Google Trends, Reddit growth, Twitter momentum
-│   └── Audience Sizer           — TAM from keyword volumes, subreddit sizes
+│   ├── Audience Sizer           — TAM from keyword volumes, subreddit sizes
+│   └── (consolidation task is a worker too, owned by research_director)
 │
-├── Product Director
-│   │   Role: Turns research into actionable product documents
-│   │   LLM:  DeepSeek
+├── product_dept_crew   (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: product_director  (LLM: DeepSeek)
 │   ├── Opportunity Scorer       — scores ideas out of 50, go/no-go recommendation
 │   ├── PRD Writer               — full product requirements document from research
 │   └── App Store Optimiser      — ASO copy, keywords, screenshots strategy
 │
-├── Content Director
-│   │   Role: Generates platform-specific content briefs and manages posting
-│   │   LLM:  MiniMax M3
+├── content_dept_crew   (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: content_director  (LLM: MiniMax M3)
 │   ├── Trend Scanner            — Reddit, Google Trends, Twitter, Instagram hashtags
 │   ├── Viral Idea Generator     — platform-specific content briefs
 │   ├── Copywriter               — captions, thread copy, post text
 │   └── Community Angle Agent    — cross-post targets, best posting times IST
 │
-├── Design Director
-│   │   Role: Validates and iterates UI designs
-│   │   LLM:  Claude (Anthropic) — vision tasks
+├── design_dept_crew    (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: design_director  (LLM: Claude — vision tasks)
 │   ├── UI Validator             — analyses screens for usability and consistency
 │   ├── Design Feedback Agent    — structured feedback with specific suggestions
 │   └── Iteration Suggester      — proposes concrete design improvements
 │
-├── Intelligence Director
-│   │   Role: Monitors markets and surfaces daily insights
-│   │   LLM:  DeepSeek
+├── intelligence_dept_crew  (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: intelligence_director  (LLM: DeepSeek)
 │   ├── App Store Analyst        — trending apps, bad reviews, missing features
 │   ├── Reddit Monitor           — keyword alerts, community sentiment
 │   └── Morning Briefing Agent   — daily summary of what matters today
 │
-└── Automation Director
-        Role: Executes actions on Mac and web on behalf of the user
-        LLM:  DeepSeek
+└── automation_dept_crew (CrewAI Crew, process=Process.hierarchical)
+    │   manager_agent: automation_director  (LLM: DeepSeek)
     ├── Mac Automation Agent     — natural language → terminal (Open Interpreter)
     ├── Social Poster            — uploads content to platforms (Skyvern)
     └── Upload Watcher           — detects new files in /upload/, triggers posting
 ```
+
+### How the CEO Orchestrator Routes a Request
+
+The CEO is **plain Python** in `backend/crews/jarvis_ceo.py`. Example for Workflow 2:
+
+```python
+# backend/crews/jarvis_ceo.py
+from crews.dept_crews import build_research_dept_crew, build_product_dept_crew
+
+def run_workflow_2(idea: str) -> dict:
+    # 1. Research dept runs — 6 specialists + consolidation
+    research_crew = build_research_dept_crew()
+    research_brief = research_crew.kickoff(inputs={"idea": idea})
+
+    # 2. Human gate — opportunity score is presented, user says yes/no
+    score_report = research_brief["opportunity_score"]
+    if not ask_user_go_no_go(score_report):           # <-- blocks on HTTP / frontend
+        return {"status": "declined", "brief": research_brief}
+
+    # 3. Product dept runs — PRD writer uses the research brief as input
+    product_crew = build_product_dept_crew()
+    prd = product_crew.kickoff(inputs={
+        "idea": idea,
+        "research_brief": research_brief,
+    })
+
+    return {"status": "completed", "prd": prd}
+```
+
+The CEO orchestrator handles:
+- Which departments to activate per workflow
+- The order of execution (parallel where possible, sequential where output depends on prior output)
+- The human-gate pause/resume handshake with the FastAPI layer
+- Saving outputs to disk and Obsidian
+- Logging token usage and cost per run
+
+It does **not** call an LLM itself. It does **not** synthesise or rewrite any text. Synthesis happens inside each dept crew's `manager_agent` (the department head).
 
 ### How the CEO Routes a Request
 
@@ -122,23 +157,76 @@ You receive: opportunity score + full PRD
 ### Hierarchy Rules — Never Break These
 
 1. **You always talk to Jarvis (CEO)** — never to individual agents directly
-2. **CEO never does work itself** — it only delegates and synthesises
-3. **Department heads never skip specialists** — they delegate down, not across
-4. **Specialists never talk to other departments** — cross-department communication goes via the CEO
-5. **New agents always slot into an existing department** — never create a free-floating agent
-6. **Engineering is outside Jarvis** — code writing/review is handled by Claude Code, not by agents
+2. **CEO is a Python orchestrator, not an LLM** — it calls `dept_crew.kickoff()` and threads outputs, never does research or writing itself
+3. **Each department head is a `manager_agent` inside its own `dept_crew`** — the dept head is a CrewAI manager, not a free-floating agent
+4. **Department heads never skip specialists** — they delegate down through their dept crew's `Process.hierarchical`, not across
+5. **Specialists never talk to other departments** — cross-department communication is routed by the Python CEO orchestrator passing outputs as inputs
+6. **New agents always slot into an existing department's crew** — never create a free-floating agent
+7. **Engineering is outside Jarvis** — code writing/review is handled by Claude Code, not by agents
+
+### Per-Department Crew Isolation; in-dept memory disabled by default
+
+**Policy (per ADR-0002, grilling session 3, 2026-06-01):** All agents in all `dept_crews` run with `memory=False`. The `Crew(...)` constructor in `backend/crews/dept_crews.py` is called with **no `memory` argument** — CrewAI's default is `False` in 0.86+ and that default is the future-proof choice (passing `memory=False` explicitly raises a deprecation warning in 0.95+). Cross-crew state is threaded **exclusively** via task `context:`. ChromaDB is not used inside any `dept_crew`. The Python CEO orchestrator passes outputs as inputs to the next department — it does not share memory across departments.
+
+Consequences:
+
+- **No cross-run contamination, by construction.** Two `kickoff()` calls on the same `research_dept_crew` cannot leak semantic fragments between ideas, because there is no shared vector store to leak from. (Pre-ADR-0002, CrewAI's `memory=True` auto-generated a collection name from crew composition — the same name across runs — so run 2 of "to-do app" could semantic-retrieve fragments from run 1 of "habit tracker".)
+- **No orphaned collections on disk.** Disabling ChromaDB eliminates the need for cleanup code, collection-name rotation, or per-run reset hooks.
+- **Cross-department state is explicit text inputs.** Easier to debug (`cat` the research brief and read it), easier to log, easier to version-control. The cost is that long context (>100k tokens) doesn't fit in a single LLM call without summarisation — but no current Jarvis workflow hits that limit.
+- **Director's role is coherent.** `research_director` and `product_director` are `manager_agent` + consolidator only. They don't have a side-job of "remember what the last specialist said" via ChromaDB.
+
+**Reserved upgrade path:** If a future workflow develops a concrete need for semantic recall within a `dept_crew` (e.g., "the gap-finder should semantic-retrieve the last 10 competitor analyses we did for similar apps"), the upgrade is an ephemeral (RAM-only) ChromaDB client per `Crew` instance — constructed inside `build_*_dept_crew()` and torn down when the crew's `kickoff()` returns. This leaves no on-disk state to leak between runs and requires no changes to `agents.yaml`. ADR-0002's policy is the *default*, not a permanent ban.
 
 ### Adding New Agents
 
-The hierarchy is designed to grow. To add a new specialist:
+The hierarchy is designed to grow. The agent-key convention (resolved in grilling session 2, Q8 — see ADR-0001 follow-ups) is:
+
+- **Agents use flat keys with a `dept:` field** in `backend/config/agents.yaml`. NOT departments-as-top-level-YAML-keys. Example:
+
+  ```yaml
+  # canonical pattern
+  research_director:
+    dept: research_dept
+    role: Research Department Director
+    ...
+  product_director:
+    dept: product_dept
+    role: Product Department Director
+    ...
+  ```
+
+- **Tasks use department-name prefixes** in `backend/config/tasks.yaml` so the loader can filter without ambiguity. Example: `research_pain_point_task`, `product_prd_writing_task`. The prefix is the disambiguator; do not put a `dept:` field on tasks.
+
+- **The loader** in `backend/crews/dept_crews.py` uses `load_agents_for("research_dept")` to filter the flat agent list by `dept:` field, and `load_tasks_for("research_dept")` to filter the task list by the `research_` prefix.
+
+To add a new specialist:
 
 1. Decide which department it belongs to
-2. Add the agent to `agents.yaml` under the correct department head
-3. Add its tasks to `tasks.yaml`
-4. Reference it in the relevant crew file
-5. The CEO and department head automatically gain access — no other files change
+2. Add a flat-keyed entry to `backend/config/agents.yaml` with `dept: <dept_name>`
+3. Add its tasks to `backend/config/tasks.yaml` using the department's task prefix (`research_*`, `product_*`, `content_*`, etc.)
+4. Reference it in `backend/crews/dept_crews.py` under the appropriate `build_<dept>_dept_crew()` factory
+5. The Python CEO orchestrator automatically routes work to the right dept — no orchestrator change needed
 
-This is the modularity guarantee: adding a new agent touches exactly 2 files (`agents.yaml` + `tasks.yaml`) and one crew file. Nothing else breaks.
+This is the modularity guarantee: adding a new agent touches exactly 2 files (`agents.yaml` + `tasks.yaml`) and one entry in `dept_crews.py`. Nothing else breaks.
+
+**Exception (ADR-0002, grilling session 3, 2026-06-01):** A task with `output_pydantic` (i.e., a strict-JSON contract) touches a 3rd file — `backend/contracts/<workflow>.py` — for the Pydantic model class. The agent + task YAML files still define *behaviour*; the contract file defines *shape*. This exception is recorded in CLAUDE.md so the rule stays consistent across docs.
+
+### Tool Registration — Built-in vs Project-Local
+
+CrewAI's `crewai-tools` pip package ships a fixed set of tools (`SerperDevTool`, `FirecrawlTool`, etc.). The rest of Jarvis's toolset is project-local — wrapped as `BaseTool` subclasses in `backend/tools/`. `agents.yaml` references both by class-name string in the agent's `tools:` list. The convention is:
+
+- **Built-in tools (`crewai-tools`):** import directly from `crewai_tools`. The loader in `dept_crews.py` does not need to register them — CrewAI resolves the name.
+- **Project-local tools:** import + register in `backend/crews/dept_crews.py` before `Crew(...)` is instantiated. The `BaseTool` subclass defines a `name` attribute; `agents.yaml` references the tool by that `name`. Example: `tools: [RedditTool, AppStoreScraperTool, PytrendsTool, ScoringRubricTool, SkyvernTool, VisionTool]`.
+- **Tool files needed (per grilling session 2, Q10 — see ADR-0001 follow-ups):**
+  - `tools/store_scraper.py` — wraps `google-play-scraper` and `app-store-scraper` npm packages. Shells out to Node via `subprocess.run` (single long-lived Node process is a Phase 7 optimisation).
+  - `tools/firecrawl_tool.py` — wraps Firecrawl API.
+  - `tools/reddit_tool.py` — wraps PRAW.
+  - `tools/pytrends_tool.py` — wraps pytrends.
+  - `tools/scoring_rubric_tool.py` — wraps the hardcoded rubric table from ADR-0000 Q1.
+  - `tools/vision_tool.py` — wraps Claude Vision (Phase 6 / Workflow 1).
+  - `tools/skyvern_tool.py` — Phase 3a: `BaseTool` stub that raises `NotImplementedError` (per ADR-0003); Phase 3b: real Skyvern-backed implementation.
+
+Adding a new tool is one new file under `backend/tools/` + one entry in the relevant agent's `tools:` list in `agents.yaml`. No Python change to crew assembly unless the tool needs custom registration.
 
 ---
 
@@ -164,16 +252,14 @@ market_researcher:
 
 ---
 
-## Layer 3 — Memory (Two-Layer System)
+## Layer 3 — Memory
 
-Jarvis uses two memory layers for different purposes. They work independently and complement each other.
+Jarvis uses one long-term memory layer (Obsidian). ChromaDB is **available in CrewAI** but **disabled by default in all `dept_crews`** per the policy above. There is no "two-layer memory" in active use — the Obsidian vault is the only layer; ChromaDB is a reserved upgrade path.
 
-### ChromaDB — Short-term / Semantic Memory
-- **Built into CrewAI** — zero extra setup
-- Stores: task context, research within a session, intermediate agent outputs
-- Query method: semantic similarity (vector search)
-- Scope: per crew run, configurable retention
-- Use case: "What did the competitor mapper find 10 minutes ago?"
+### ChromaDB — Available, disabled by default
+- **Status:** Built into CrewAI, but `memory` argument is **omitted** from every `Crew(...)` call in `backend/crews/dept_crews.py`. CrewAI's default is `memory=False`, so no `memory` argument means no ChromaDB.
+- **Why disabled:** ADR-0002 (grilling session 3, 2026-06-01) decided that all inter-agent state flows through explicit task `context:`. No semantic recall is needed inside the crew — and disabling ChromaDB eliminates the cross-run contamination failure mode (Q13 of grilling session 2) by construction.
+- **Reserved upgrade path:** If a future workflow needs in-dept semantic recall, the upgrade is an ephemeral (RAM-only) ChromaDB client per `Crew` instance. No on-disk state, no per-run reset hooks. See "Per-Department Crew Isolation" section above for the full policy.
 
 ### Obsidian Vault — Long-term / Structured Memory
 - **Location:** `/obsidian-vault/` in project root
@@ -262,10 +348,15 @@ All voice components run locally. Zero API cost.
 jarvis/
 ├── backend/
 │   ├── crews/
+│   │   ├── jarvis_ceo.py          # Python orchestrator over all workflows
+│   │   ├── dept_crews.py          # build_research_dept_crew() + build_product_dept_crew() etc.
 │   │   ├── research_crew.py       # Workflow 2 — Research + PRD
 │   │   ├── content_crew.py        # Workflow 6 — Content pipeline
 │   │   ├── design_crew.py         # Workflow 1 — UI validation
 │   │   └── social_crew.py         # Workflow 3 + 4 — Social + App Store
+│   ├── orchestrator/
+│   │   └── human_gate.py          # ask_user / receive_user_reply handshake
+│   ├── state/                     # JSON-file run state (gitignored)
 │   ├── config/
 │   │   ├── agents.yaml            # All agent definitions
 │   │   └── tasks.yaml             # All task definitions
@@ -333,30 +424,43 @@ jarvis/
    └── Via: frontend button / voice command / terminal
 
 2. FastAPI (main.py)
-   └── Receives request → validates input → calls correct crew
+   └── Receives request → validates input → calls the Python CEO orchestrator
+       for the matching workflow
 
-3. CrewAI Manager Agent (DeepSeek)
-   └── Reads task → decomposes → delegates to specialist agents
+3. Python CEO Orchestrator (backend/crews/jarvis_ceo.py)
+   └── Decides which dept_crews to activate and in what order
+   └── Calls the first dept_crew via crew.kickoff(inputs={...})
+   └── No LLM call at the CEO level — pure Python routing
 
-4. Specialist Agents run in parallel
-   └── Each agent: reads tools → queries external APIs → returns findings
+4. dept_crew (CrewAI Crew, process=Process.hierarchical)
+   └── manager_agent = department head (LLM: DeepSeek / MiniMax M3 / Claude)
+   └── Manager reads the task → decomposes → delegates to specialist agents
+   └── Each specialist agent: reads tools → queries external APIs → returns findings
    └── Tools used: Firecrawl, PRAW, SerperDev, store_scraper, pytrends
 
-5. ChromaDB
-   └── Stores intermediate results → agents query each other's findings
+5. ChromaDB (one collection per dept_crew)
+   └── Stores intermediate results within this department only
+   └── Cross-department data is passed as explicit text inputs by the CEO
 
-6. Synthesis Agent
-   └── Consolidates all findings → produces final output
+6. Department head synthesises its dept's outputs into a final dept result
+   └── Returns the dept result to the Python CEO orchestrator
 
-7. Human Gate (where applicable)
-   └── FastAPI pauses crew → sends result to frontend → waits for approval
+7. CEO orchestrator threads the dept result into the next dept_crew's inputs
+   └── OR presents the dept result to the user (human gate)
 
-8. Output saved
+8. Human Gate (where applicable)
+   └── CEO orchestrator pauses → returns the report to FastAPI
+   └── FastAPI sends the report to the frontend → waits for user reply
+   └── User replies via the dashboard → CEO orchestrator resumes the workflow
+   └── All human-gate state is held in the orchestrator (not inside the crew),
+       so the dept_crew finishes cleanly and the next dept_crew starts fresh.
+
+9. Output saved (per workflow completion)
    └── Markdown file → /backend/output/
    └── Key findings → Obsidian vault via obsidian_sync.py
    └── Run summary → jarvis.log
 
-9. Frontend
+10. Frontend
    └── Polls FastAPI → displays output in OutputViewer component
 ```
 
@@ -401,13 +505,17 @@ Significant decisions made and why — for future reference.
 | Jun 2026 | CrewAI over AutoGen | YAML config more accessible for owner's skill level |
 | Jun 2026 | DeepSeek as primary LLM | Cost — 10x cheaper, comparable performance for research tasks |
 | Jun 2026 | MiniMax M3 for coding/multimodal | Better than DeepSeek for code generation and image+text tasks |
-| Jun 2026 | Two-layer memory (ChromaDB + Obsidian) | VectorDB alone lacks relationship mapping and long-term cross-session knowledge |
+| Jun 2026 | In-dept memory disabled (ChromaDB off, Obsidian only) | Inter-agent state flows via explicit task `context:`. ChromaDB available as a future upgrade path if a workflow develops a concrete semantic-recall need. Cross-run contamination eliminated by construction. ADR-0002. |
 | Jun 2026 | No Docker until Phase 7 | Hides errors during learning phase — costs debugging time |
 | Jun 2026 | Manual triggers before scheduling | Validate workflows work before automating them |
 | Jun 2026 | Next.js frontend over Open WebUI | Long-term customisability — Open WebUI is fallback only |
 | Jun 2026 | Hermes Agent deferred | Compelling self-improvement loop but community too small at this stage |
 | Jun 2026 | Three-level CEO hierarchy from day one | Flat crews require full rewrite to add hierarchy later — cheaper to design correctly once |
+| Jun 2026 | CEO is a Python orchestrator over per-dept CrewAI crews | CrewAI `Process.hierarchical` is 2 levels natively. A Python CEO + per-dept sub-crews gives the 3-level model the docs describe, while keeping the "specialists never cross departments" rule enforceable. |
 | Jun 2026 | Engineering department excluded from Jarvis | Claude Code is purpose-built for coding — CrewAI agents are poor at long code generation, no overlap needed |
+| Jun 2026 | Phase 3 split into 3a (briefs, manual post) and 3b (Skyvern auto-post) | Skyvern is the single biggest install risk in the project. Splitting the go/no-go boundary lets the creative half ship independently if Skyvern install fails. ADR-0003. |
+| Jun 2026 | Cost guard: 200k-token hard cap per run, fail-loud on exceed | Buggy infinite-loop crew would otherwise blow the ₹2,000/month budget. Daily cap and automatic model fallback deferred to Phase 7. ADR-0001 Q14. |
+| Jun 2026 | Save research brief before the human gate; expose PRD-only recovery path | The 6-specialist research brief is the most expensive output. Losing it on a PRD-write crash would force a full re-run. Brief is durable from the moment research_dept_crew.kickoff() returns. ADR-0001 Q15. |
 
 ---
 

@@ -38,38 +38,94 @@
 
 **Goal:** Everything installed, repo created, `.env` working, CrewAI runs a hello-world crew.
 
-**Definition of done:** Running `python backend/main.py` prints agent output in terminal with no errors.
+**Definition of done (Phase 0a):** Running `python backend/main.py` prints agent output in terminal with no errors.
 
-### Steps
+**Rule for what to install when (resolved 2026-06-01):** Install only what the **next** workflow needs. Each sub-phase installs a different batch, scoped to a specific upcoming workflow. No "big bang" install.
 
+> This is the explicit split. Do not skip sub-phases. Do not combine them. Each sub-phase must close (install + smoke test) before the next starts.
+
+### Phase 0a — Minimum to run hello-world crew (2–3 hrs)
+
+**Goal:** The framework runs end-to-end with one agent and one task. Nothing else.
+
+**Install batch:**
+- Python 3.11, pip, pipx, node, git (system)
+- `crewai`, `crewai-tools`
+- `anthropic` SDK, `openai` SDK (needed for OpenRouter / DeepSeek routing)
+- `python-dotenv`
+
+**Build:**
 - [ ] Delete old Jarvis project locally and on GitHub
 - [ ] Create new GitHub repo: `jarvis` (private)
 - [ ] Clone repo to Mac: `git clone ...`
-- [ ] Create full folder structure (all folders and placeholder files)
-- [ ] Install base dependencies:
-  - Python 3.11, pip, pipx, node, git
-  - CrewAI + crewai-tools
-  - openai, anthropic SDK
-- [ ] Install scraping tools:
-  - firecrawl-py, praw, pytrends, playwright, beautifulsoup4
-  - npm: google-play-scraper, app-store-scraper
-- [ ] Install automation tools:
-  - open-interpreter, pyautogui, skyvern
+- [ ] Create full folder structure (all folders and `.gitkeep` files)
 - [ ] Create `.env` from `.env.example` — fill all API keys
 - [ ] Run `env_validator.py` — confirms all keys present
 - [ ] Set up logger — `logger.py` writes to `logs/jarvis.log`
+- [ ] Minimal FastAPI stub in `backend/main.py` (just `/health` endpoint)
+- [ ] **Pre-existing out-of-phase file (deviation noted):** `backend/orchestrator/human_gate.py` — written 2026-06-01, see `docs/adr/0000-grilling-session-2026-06-01.md` Question 3
 - [ ] Run hello-world CrewAI crew — one agent, one task, prints output
-- [ ] First git commit: `init: project structure and environment`
+- [ ] First git commit: `init: project structure and environment (phase 0a)`
 
-### Files created this phase
+**Files created this sub-phase:**
 ```
 backend/utils/logger.py
 backend/utils/env_validator.py
-backend/main.py              ← minimal FastAPI stub
+backend/orchestrator/human_gate.py   ← written ahead of phase, deviation noted
+backend/main.py                       ← minimal FastAPI stub with /health
 .env.example
 .gitignore
 scripts/setup.sh
 ```
+
+**Definition of done for 0a:** `python backend/main.py` starts the server, `GET /health` returns 200, `python -m orchestrator.human_gate` smoke test passes.
+
+---
+
+### Phase 0b — Workflow 2 prep (1–2 hrs, before Phase 1 starts)
+
+**Goal:** All the tools Workflow 2 needs are installable and importable.
+
+**Install batch:**
+- `firecrawl-py`, `praw`, `pytrends`
+- `playwright` (with `playwright install chromium`)
+- npm: `google-play-scraper`, `app-store-scraper`
+- `beautifulsoup4` (fallback parser for Firecrawl when it returns HTML)
+
+**Smoke test:** Each tool runs a single demo call (search one app, scrape one URL, etc.) and prints a result.
+
+**Definition of done for 0b:** `python -c "from tools.store_scraper import search_app_store; print(search_app_store('habit tracker')[:3])"` prints 3 app names.
+
+---
+
+### Phase 0c — Phase 3b prep (Skyvern install batch)
+
+**Goal:** Social posting tools are installable and importable.
+
+**Trigger:** This phase runs **only when Phase 3b starts**, not before Phase 3. Phase 3a (briefs only) does not require any of these installs. (Per [ADR-0003](adr/0003-split-phase-3-skyvern-fallback.md) — Skyvern is the single biggest install risk; deferring the install off Phase 3a's critical path means a Skyvern install failure cannot block brief-generation shipping.)
+
+**Install batch:**
+- `skyvern` (may require Docker on macOS — historically fragile on Apple Silicon)
+- `pyautogui` (Skyvern fallback for sites it cannot handle)
+- `instagrapi` (use with a dedicated burner account only)
+
+**Smoke test:** Skyvern can open a browser session and load a URL headlessly.
+
+**Definition of done for 0c:** `python -c "import skyvern; print('skyvern ok')"` succeeds without errors.
+
+---
+
+### Phase 0d — Workflow 8 prep (when Phase 6 starts)
+
+**Goal:** Mac automation tools are installable and importable.
+
+**Install batch:**
+- `open-interpreter` (separate framework — install in its own venv if it conflicts)
+- `sounddevice`, `pvporcupine` (wake word — if voice layer is being built in the same phase)
+
+**Smoke test:** Open Interpreter can run a single shell command via natural language.
+
+**Definition of done for 0d:** `python -c "import interpreter; interpreter.auto_run = False; print('interpreter ok')"` succeeds.
 
 ---
 
@@ -83,15 +139,24 @@ scripts/setup.sh
 
 ### Steps
 
-- [ ] Write `config/agents.yaml` — all 8 agents for Workflow 2:
-  - manager, pain_point_hunter, competitor_mapper, revenue_estimator, gap_finder, trend_validator, audience_sizer, synthesis_agent
-- [ ] Write `config/tasks.yaml` — all tasks for Workflow 2
+- [ ] Write `config/agents.yaml` — all 9 agents for Workflow 2:
+  - research_director, research_interpreter (per ADR-0002), pain_point_hunter, competitor_mapper, revenue_estimator, gap_finder, trend_validator, audience_sizer, product_director, opportunity_scorer, prd_writer
+  - All agents: `memory: false` (per ADR-0002 Q4 — Per-Department Crew Isolation policy)
+- [ ] Write `config/tasks.yaml` — all tasks for Workflow 2:
+  - `research_interpretation_task` with `output_pydantic: contracts.research.ResearchInterpretation` and `max_retries: 3` (per ADR-0002 Q3, Q6)
+  - 6 specialist tasks with `async_execution: true` (per ADR-0002 Q1)
+  - `research_consolidation_task` stays sync — blocks on the 6 async tasks
+- [ ] Write `backend/contracts/__init__.py` and `backend/contracts/research.py` — Pydantic v2 contract for interpretation (per ADR-0002 Q3)
+- [ ] Write `backend/crews/dept_crews.py` — `build_research_dept_crew()` and `build_product_dept_crew()`. **No `memory` argument** on `Crew(...)` (per ADR-0002 Q4). Includes the `r/` subreddit sanitiser post-parse and the manual retry fallback for `output_pydantic` (per ADR-0002 Q3, Q6).
 - [ ] Write `tools/store_scraper.py` — wraps google-play-scraper + app-store-scraper
 - [ ] Write `tools/firecrawl_tool.py` — wraps Firecrawl API
 - [ ] Write `tools/reddit_tool.py` — wraps PRAW for subreddit search
-- [ ] Write `crews/research_crew.py` — assembles agents + tasks, runs parallel where possible
+- [ ] Write `tools/pytrends_tool.py` — wraps pytrends for trend validation
+- [ ] Write `tools/scoring_rubric_tool.py` — wraps the hardcoded rubric table from Q1 of ADR-0000
+- [ ] Write `crews/jarvis_ceo.py` — Python CEO orchestrator (per ADR-0000 Q2). Implements Q15 (save research_brief before gate) and Q14 (cost_guard wiring).
 - [ ] Wire crew into `main.py` — callable via function
-- [ ] Add cost_guard.py — log token usage per run
+- [ ] Add `cost_guard.py` — log token usage per run, per-run hard cap 200k tokens, raise `BudgetExceeded` on exceed
+- [ ] **Parallelism smoke test (per ADR-0002 Q1):** `tests/test_workflow_2_parallelism.py` with mocked LLM. Asserts the 6 specialist `START` timestamps are within 1s of each other; asserts total wall-clock is < 30s. If this test fails, trigger the Q2 fallback matrix.
 - [ ] Test with real app idea (e.g. "a habit tracker for Indian college students")
 - [ ] Human gate working — crew pauses, prints score, asks for go/no-go
 - [ ] PRD output saved as markdown to `/backend/output/`
@@ -102,12 +167,18 @@ scripts/setup.sh
 ```
 backend/config/agents.yaml
 backend/config/tasks.yaml
+backend/contracts/__init__.py
+backend/contracts/research.py
+backend/crews/dept_crews.py
+backend/crews/jarvis_ceo.py
 backend/tools/store_scraper.py
 backend/tools/firecrawl_tool.py
 backend/tools/reddit_tool.py
-backend/crews/research_crew.py
+backend/tools/pytrends_tool.py
+backend/tools/scoring_rubric_tool.py
 backend/memory/obsidian_sync.py
 backend/utils/cost_guard.py
+tests/test_workflow_2_parallelism.py
 ```
 
 ### Expected output format
@@ -143,28 +214,76 @@ backend/crews/content_crew.py    ← stub for later
 
 ## Phase 3 — Workflow 3: Social Media Content Engine
 
-**Goal:** Trigger once → get platform-specific viral content briefs for YouTube, Instagram, Twitter, Reddit. Drop finished file → Skyvern posts it.
+> **Split into 3a (briefs) and 3b (Skyvern auto-post) per [ADR-0003](adr/0003-split-phase-3-skyvern-fallback.md).** Skyvern is the single biggest install risk in the project; if its install fails, the brief-generation work (which is already 90% of the daily value) is gated behind a blocked phase. Splitting the go/no-go boundary lets the creative half ship independently. See the two sub-phases below.
 
-**Definition of done:** Brief generated for all 4 platforms + Skyvern successfully posts to at least one.
+---
+
+### Phase 3a — Workflow 3 (briefs only)
+
+**Goal:** Trigger once → get platform-specific viral content briefs for YouTube, Instagram, Twitter, Reddit. Developer copy-pastes captions and uploads media by hand.
+
+**Crews involved:** `content_dept_crew` only. `automation_dept_crew` is never invoked.
+
+**Definition of done:** `content_dept_crew` produces valid briefs for each of the 4 platforms. Tested as a **4-run capability matrix** — for each of YouTube / Instagram / Twitter / Reddit, run the crew with a mock topic and assert the brief file contains a populated platform-specific section. (Per ADR-0003 capability reading — the system can produce all 4; per-run output is whatever the user picks at the Human Gate 1 step.)
+
+**Cost per run:** ₹1.50–11 depending on platform count. Earlier "₹6–11" estimate assumed all 4 platforms in every run; the actual per-run cost is proportional to the number of platforms the user selects at Human Gate 1.
 
 ### Steps
 
-- [ ] Add social agents to `agents.yaml`:
-  - trend_scanner, trend_analyser, viral_idea_generator, community_angle_agent
-- [ ] Add Workflow 3 tasks to `tasks.yaml`
-- [ ] Write `crews/social_crew.py`
-- [ ] Add pytrends integration to tools
+- [ ] Add `content_dept_crew` agents to `agents.yaml` (flat keys with `dept: content` per ADR-0000 Q8 + ADR-0002):
+  - `content_director`, `trend_scanner`, `trend_analyser`, `viral_idea_generator`, `community_angle_agent`
+- [ ] Add `social_poster` agent entry to `agents.yaml` with `tools: [SkyvernTool]` — agent config exists in Phase 3a for defense in depth (ADR-0003) but is never invoked. Phase 3b wires it into `automation_dept_crew`. The corresponding `tools/skyvern_tool.py` is a `BaseTool` stub that raises `NotImplementedError` if reached.
+- [ ] Add Workflow 3a tasks to `tasks.yaml` (everything except `social_posting_task`)
+- [ ] Write `crews/content_crew.py` — `build_content_dept_crew()` factory (per Q11 per-dept-crew pattern from ADR-0002)
+- [ ] Add `tools/skyvern_tool.py` — `BaseTool` stub per ADR-0003 ("Skyvern not installed — copy caption from {brief_path} and upload manually")
+- [ ] Add `tools/trend_tool.py` — wraps pytrends
 - [ ] Add Instagram/Reddit/Twitter trend fetching
-- [ ] Configure Skyvern for Instagram posting
-- [ ] Configure Skyvern for Twitter posting
-- [ ] Upload gate: Jarvis watches `/backend/upload/` folder, triggers Skyvern on new file
+- [ ] Add `run_workflow_3_briefs(topic)` to `crews/jarvis_ceo.py` — invokes `content_dept_crew`, writes `Brief_{topic}_YYYY-MM-DD.md` to `backend/output/`, fires ntfy.sh "Your brief is ready" notification
+- [ ] **Capability test (4-run matrix):** `tests/test_workflow_3a_platform_matrix.py` — for each of YouTube / Instagram / Twitter / Reddit, run the crew with a mock topic, assert the brief file exists with the platform-specific section populated
+- [ ] Human gate 1 working — crew pauses, developer picks platforms, crew finishes writing the brief
+- [ ] Brief saved as `Brief_{topic}_YYYY-MM-DD.md` (per ADR-0003; CLAUDE.md filename convention)
 - [ ] ntfy.sh notification: "Your brief is ready" → phone
-- [ ] Git commit: `feat: workflow-3 social content engine and skyvern posting`
+- [ ] Git commit: `feat: workflow-3a social content briefs (manual posting)`
 
 ### Files created this phase
 ```
-backend/crews/social_crew.py
-backend/tools/trend_tool.py
+backend/crews/content_crew.py        # build_content_dept_crew() factory
+backend/tools/__init__.py            # package marker (matches contracts/ pattern)
+backend/tools/skyvern_tool.py        # BaseTool stub, NotImplementedError (per ADR-0003)
+backend/tools/trend_tool.py          # wraps pytrends
+```
+
+---
+
+### Phase 3b — Workflow 3 (Skyvern auto-post)
+
+**Goal:** Drop finished file into `backend/upload/` → Skyvern posts it. Upload watcher detects new files, triggers `automation_dept_crew`, posts to Instagram + Twitter at minimum.
+
+**Prerequisite:** Phase 0c (Skyvern install batch) has succeeded. Per ADR-0003, Phase 0c moves from "before Phase 3" to "before Phase 3b".
+
+**Crews involved:** `automation_dept_crew`. `content_dept_crew` (Phase 3a) is reused only as the source of the brief referenced at upload time.
+
+**Definition of done:** Skyvern successfully posts to at least one platform (Instagram, Twitter, or YouTube) unattended. Post URL returned and logged.
+
+### Steps
+
+- [ ] Phase 0c runs successfully — `import skyvern` works
+- [ ] Replace `tools/skyvern_tool.py` stub with the real Skyvern-backed implementation (calls Skyvern API / browser)
+- [ ] Add `automation_dept_crew` to `crews/content_crew.py` (same file as Phase 3a crew — both halves live together for the post-3b Workflow 3 crew)
+  - `automation_director` + `social_poster` (already in `agents.yaml` from Phase 3a)
+- [ ] Add `social_posting_task` to `tasks.yaml`
+- [ ] Configure Skyvern for Instagram posting
+- [ ] Configure Skyvern for Twitter posting
+- [ ] Upload gate: Jarvis watches `/backend/upload/` folder, triggers `automation_dept_crew` on new file
+- [ ] Update `crews/jarvis_ceo.py` to also expose `run_workflow_3_post(upload_path, brief_path, platform)` — the post-flight half
+- [ ] **Smoke test:** Drop a test image into `backend/upload/`, confirm Skyvern posts (or fails with a clear error)
+- [ ] Human gate 2 — posting confirmation
+- [ ] Git commit: `feat: workflow-3b skyvern auto-post`
+
+### Files created or modified this phase
+```
+backend/tools/skyvern_tool.py        # replaced — real implementation
+backend/crews/content_crew.py        # extended — automation_dept_crew factory added
 ```
 
 ---
@@ -231,7 +350,7 @@ backend/voice/listener.py
 
 | Workflow | What to build |
 |----------|--------------|
-| 1 — UI Design Loop | design_crew.py + Claude vision integration + upload watcher |
+| 1 — UI Design Loop | `build_design_dept_crew()` (per-dept-crew pattern, ADR-0001 Q11) + Claude vision integration via `tools/vision_tool.py` + upload watcher |
 | 5 — Competitor Teardown | Extends research_crew with deeper scraping |
 | 6 — Content Pipeline | content_crew.py — topic → platform post |
 | 7 — Morning Briefing | Scheduled summary of App Store + Reddit + trends |
@@ -240,6 +359,16 @@ backend/voice/listener.py
 | 10 — Reddit Monitor | PRAW monitor + keyword alerts |
 
 - [ ] Git commit per workflow: `feat: workflow-N complete`
+
+### Files created during Phase 6 (key tool / crew additions)
+
+Per ADR-0001 Q10 — Phase 6 deliverables that are project-local tool wrappers (not built into `crewai-tools`):
+
+```
+backend/tools/vision_tool.py                # wraps Claude Vision API (Workflow 1)
+```
+
+Plus per-dept-crew factory additions to `backend/crews/dept_crews.py` as each new workflow lands: `build_design_dept_crew()` (Workflow 1), `build_intelligence_dept_crew()` (Workflow 7), `build_automation_dept_crew()` (Workflow 8 — already added in Phase 3b for Workflow 3 auto-post).
 
 ---
 
@@ -319,7 +448,10 @@ Before marking any phase done:
 
 | Phase | Status |
 |-------|--------|
-| 0 — Setup | ⬜ Not started |
+| 0a — Hello-world crew | ⬜ Not started |
+| 0b — Workflow 2 prep (scraping tools) | ⬜ Not started |
+| 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started |
+| 0d — Workflow 8 prep (Open Interpreter) | ⬜ Not started |
 | 1 — Workflow 2 (PRD) | ⬜ Not started |
 | 2 — Workflow 4 (App Store) | ⬜ Not started |
 | 3 — Workflow 3 (Social) | ⬜ Not started |

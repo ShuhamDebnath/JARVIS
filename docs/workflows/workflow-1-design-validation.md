@@ -20,9 +20,13 @@ You upload a screen design document or image. Jarvis analyses it using Claude Vi
 
 ## Agent Hierarchy for This Workflow
 
+> Per ADR-0001 Q11 (grilling session 2, 2026-06-01) — Workflow 1 now mirrors Workflow 2's per-department-crew structure. The 3-level hierarchy is enforced via a Python CEO + per-dept sub-crew, not a single flat crew.
+
 ```
-Jarvis CEO
-└── Design Director
+Jarvis CEO  (Python orchestrator — backend/crews/jarvis_ceo.py)
+│
+└── design_dept_crew  (CrewAI Crew, process=Process.hierarchical)
+    │   manager_agent: design_director  (LLM: Claude — vision-capable)
     ├── UI Validator          (Claude Vision — analyses the screen)
     ├── Design Feedback Agent (structures the findings into actionable feedback)
     └── Iteration Suggester   (proposes specific concrete improvements)
@@ -115,7 +119,15 @@ User reads the report and responds:
 ## agents.yaml additions for Workflow 1
 
 ```yaml
+# ─────────────────────────────────────────
+# DEPARTMENT: design_dept
+# Members of this department are loaded by build_design_dept_crew()
+# in backend/crews/dept_crews.py. The dept head (design_director)
+# becomes the manager_agent of the dept_crew.
+# All agents: memory: false (per ADR-0002 — Per-Department Crew Isolation).
+# ─────────────────────────────────────────
 design_director:
+  dept: design_dept
   role: Design Department Director
   goal: >
     Coordinate UI validation for {filename}.
@@ -127,9 +139,10 @@ design_director:
     You understand Indian users and App Store conversion.
   llm: deepseek/deepseek-chat
   allow_delegation: true
-  memory: true
+  memory: false
 
 ui_validator:
+  dept: design_dept
   role: UI Design Validator
   goal: >
     Analyse the uploaded screen design {filename} across 6 dimensions:
@@ -143,9 +156,10 @@ ui_validator:
   llm: claude/claude-sonnet-4-5
   tools: [VisionTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 design_feedback_agent:
+  dept: design_dept
   role: Design Feedback Specialist
   goal: >
     Take the raw UI analysis of {filename} and structure it into
@@ -158,9 +172,10 @@ design_feedback_agent:
     You are constructive, not harsh. You always note what is working.
   llm: deepseek/deepseek-chat
   allow_delegation: false
-  memory: true
+  memory: false
 
 iteration_suggester:
+  dept: design_dept
   role: Design Iteration Specialist
   goal: >
     For every Critical and Important issue in the feedback report for {filename},
@@ -173,15 +188,17 @@ iteration_suggester:
     each one without further clarification.
   llm: deepseek/deepseek-chat
   allow_delegation: false
-  memory: true
+  memory: false
 ```
 
 ---
 
 ## tasks.yaml additions for Workflow 1
 
+> All task names are prefixed with `design_` so they cannot collide with tasks from other depts loaded by other `build_*_dept_crew()` factories from the same `tasks.yaml`. (Convention per ADR-0000 Q2.)
+
 ```yaml
-ui_validation_task:
+design_ui_validation_task:
   description: >
     Analyse this uploaded screen: {filename}
     Examine it across all 6 dimensions:
@@ -203,9 +220,9 @@ design_feedback_task:
   expected_output: >
     Formatted feedback report with prioritised issues and strengths.
   agent: design_feedback_agent
-  context: [ui_validation_task]
+  context: [design_ui_validation_task]
 
-iteration_suggestion_task:
+design_iteration_suggestion_task:
   description: >
     For every Critical and Important issue in the feedback for {filename},
     add a specific implementation suggestion.
@@ -220,11 +237,50 @@ iteration_suggestion_task:
 
 ---
 
+## Crew Assembly
+
+Per the per-department-crew pattern (ADR-0000 Q2, ADR-0001 Q11), this workflow is a Python CEO + a single `design_dept_crew`:
+
+```python
+# backend/crews/dept_crews.py — design dept section
+from crewai import Crew, Process
+from config.loader import load_agents_for, load_tasks_for
+
+def build_design_dept_crew() -> Crew:
+    """Build the design_dept_crew for Workflow 1 (UI Design Loop)."""
+    agents = load_agents_for("design_dept")
+    tasks  = load_tasks_for("design_dept")     # filters by design_ prefix
+    return Crew(
+        agents=agents,
+        tasks=tasks,
+        process=Process.hierarchical,
+        manager_agent=agents["design_director"],
+        # NOTE: no `memory` argument — defaults to False per ADR-0002 Q4
+        # (Per-Department Crew Isolation; in-dept memory disabled by default).
+        verbose=True,
+    )
+```
+
+The Python CEO orchestrator calls it via:
+
+```python
+# backend/crews/jarvis_ceo.py — Workflow 1 entry point
+def run_workflow_1(upload_path: str, run_id: str) -> dict:
+    design_crew = build_design_dept_crew()
+    feedback = design_crew.kickoff(inputs={"filename": upload_path})
+    return {"status": "completed", "feedback": feedback}
+```
+
+The CEO does not call any other department for Workflow 1 — `design_dept_crew` is self-contained. The upload watcher (file detected in `backend/upload/`) is what triggers `run_workflow_1`; it lives in `automation_dept_crew` per the architecture diagram, but the handoff is also CEO-mediated (Q11 cross-dept rule).
+
+---
+
 ## Files Involved
 
 ```
-backend/crews/design_crew.py
-backend/tools/vision_tool.py        # wraps Claude Vision API
+backend/crews/dept_crews.py                 # build_design_dept_crew() factory (lives with other dept factories)
+backend/crews/jarvis_ceo.py                 # run_workflow_1(upload_path, run_id)
+backend/tools/vision_tool.py                # wraps Claude Vision API (Phase 6 deliverable per ADR-0001 Q10)
 backend/output/Design_{name}_{date}_v{n}.md
 obsidian-vault/designs/{appname}/{screenname}.md
 ```

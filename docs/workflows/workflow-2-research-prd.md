@@ -22,26 +22,42 @@ Jarvis researches the market, scores the opportunity, and — if you approve —
 ## Agent Hierarchy for This Workflow
 
 ```
-Jarvis CEO
-└── Research Director
-    ├── Pain Point Hunter
-    ├── Competitor Mapper
-    ├── Revenue Estimator
-    ├── Gap Finder
-    ├── Trend Validator
-    └── Audience Sizer
-└── Product Director
+Jarvis CEO  (Python orchestrator — backend/crews/jarvis_ceo.py)
+│
+├── research_dept_crew  (CrewAI Crew, process=Process.hierarchical)
+│   │   manager_agent: research_director
+│   ├── Pain Point Hunter
+│   ├── Competitor Mapper
+│   ├── Revenue Estimator
+│   ├── Gap Finder
+│   ├── Trend Validator
+│   ├── Audience Sizer
+│   └── (consolidation task owned by research_director)
+│
+└── product_dept_crew   (CrewAI Crew, process=Process.hierarchical)
+    │   manager_agent: product_director
     ├── Opportunity Scorer
     └── PRD Writer
 ```
 
 **Flow:**
-1. CEO receives idea → activates Research Director + Product Director
-2. Research Director runs 6 specialists in parallel
-3. Research Director consolidates findings → passes to Product Director
-4. Opportunity Scorer scores → presents to user → waits for approval
-5. PRD Writer runs only if user approves
-6. CEO returns final output
+1. User types idea in plain English via frontend or terminal
+2. FastAPI route `POST /workflow/research` calls `run_workflow_2(idea)` in the CEO orchestrator
+3. CEO orchestrator calls `research_dept_crew.kickoff(inputs={"idea": idea})`
+4. research_director (manager_agent) runs `research_interpretation_task` first — produces a structured JSON interpretation brief (app_category, target_user, core_problem, search_keywords, subreddits_to_monitor, app_store_categories, ambiguity_flag). All 6 specialist tasks receive this as context.
+5. If `ambiguity_flag` is non-null, the CEO orchestrator can either (a) ask the user a clarifying question via `human_gate.ask_user()`, or (b) proceed with the most likely interpretation and echo the flag into the final PRD's "Assumptions" section
+6. research_director delegates 6 specialist tasks in parallel — each uses the interpretation JSON as its shared scope (same keywords, same subreddits, same App Store categories)
+7. research_director consolidates 6 outputs into the unified research brief
+8. research_dept_crew returns the brief to the CEO orchestrator
+9. CEO orchestrator presents the opportunity score to the user (human gate)
+10. User replies "yes" or "no" via the dashboard
+11. If "yes", CEO calls `product_dept_crew.kickoff(inputs={"idea": idea, "research_brief": brief})`
+12. product_director (manager_agent) delegates to opportunity_scorer and prd_writer
+13. product_dept_crew returns the PRD to the CEO orchestrator
+14. CEO saves the PRD to `backend/output/PRD_{appname}_{date}.md` and writes Obsidian notes
+15. CEO returns the final result to FastAPI
+
+The two dept_crews never share memory. The CEO orchestrator passes the research brief to the product dept as an explicit text input. This is what solves the "memory bleeding between runs" issue — each dept_crew can be reset cleanly and independently.
 
 ---
 
@@ -55,7 +71,22 @@ Jarvis CEO
 
 ### Step 2 — 6 Research Specialists Run in Parallel
 
-All 6 agents fire simultaneously. Each has a specific job and specific tools.
+**Before the 6 specialists fire, `research_director` runs `research_interpretation_task` once (see tasks.yaml below).** That single LLM call converts the raw one-sentence idea into a structured JSON interpretation document containing:
+- `app_category` (one of productivity / health / education / finance / social / utility / other)
+- `target_user` (one-sentence demographic)
+- `core_problem` (one-sentence problem statement)
+- `search_keywords` (5 keywords all specialists must use)
+- `subreddits_to_monitor` (5 subreddit names)
+- `app_store_categories` (2 iOS + 2 Google Play categories)
+- `ambiguity_flag` (string starting with `AMBIGUOUS:` if the idea is genuinely unclear, else `null`)
+
+All 6 specialist tasks below receive this JSON as `context: [research_interpretation_task]` and are explicitly told in their description: *"Use the interpretation document above. Do not re-interpret the idea. Use the search_keywords, subreddits, and app_store_categories from the document."* This is what eliminates the "6 different research directions from the same input" failure mode — all specialists share one canonical interpretation.
+
+**Why the director does the interpretation, not a new specialist agent:** adding a new agent would be a cross-cutting change (departments, hierarchy, agent files). The director is already the `manager_agent` — it owns the workflow. A cheap single-call task it executes is the lightest possible change. If interpretation quality is poor in early runs, the cheap fix is to tighten the director's system prompt, not spin up a new agent.
+
+**Ambiguity flag handling:** If `ambiguity_flag` is non-null, the CEO orchestrator surfaces it to the user via the existing `human_gate.ask_user()` mechanism with a "Did you mean X or Y?" question. If the user does not reply within the gate's 24h timeout, the workflow proceeds with the most likely interpretation and the flag is echoed into the final PRD's "Assumptions" section so the user sees what Jarvis assumed.
+
+All 6 agents fire simultaneously after the interpretation step completes. Each has a specific job and specific tools.
 
 #### Agent A — Pain Point Hunter
 **Job:** Find real user frustrations that prove the problem exists  
@@ -121,10 +152,23 @@ Scores the opportunity out of 50 across 5 dimensions:
 | Trend momentum | 10 | Growing fast = high score, declining = low |
 | Build effort vs reward | 10 | Can one developer build the MVP? Reward justifies effort? |
 
+> **Scoring implementation — HYBRID RUBRIC (resolved 2026-06-01).**
+> The first 4 dimensions are **hard sub-scores**: the LLM extracts a specific
+> data point from the research brief, looks it up in the published rubric
+> table (`scoring_rubric:` below), and reports the score from the table.
+> The LLM is NOT allowed to assign a hard sub-score without showing both
+> the data point and the rubric row. The 5th dimension (build effort) is
+> the only **subjective** sub-score and is explicitly labelled "(subjective)".
+
 **Scoring rule:**
 - Above 35 → worth building → present to user with recommendation to proceed
 - 25–35 → borderline → present to user with specific risks highlighted
 - Below 25 → skip → present to user with evidence for why
+
+> **Threshold calibration note:** The 35/50 threshold is a **default placeholder**.
+> It must be empirically re-validated after 10+ real runs of Workflow 2.
+> Until then, every scoring report logs the threshold it used at the top.
+> Do NOT silently change the threshold.
 
 ### Step 5 — Human Gate
 
@@ -134,9 +178,21 @@ Jarvis presents the score to the user:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 JARVIS MARKET VALIDATION REPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Threshold used: 35/50 (DEFAULT — to be re-validated after 10+ runs)
 Idea: Habit tracker for Indian college students
 
 OPPORTUNITY SCORE: 38 / 50 ✅ Worth Building
+
+  Market size:          8/10  — 540k subs across r/IndianHabits r/india + 1.2M
+                                monthly searches (rubric row: 500k–2M)
+  Competition density:  7/10  — 2 apps with rating ≥ 4.0 in category
+                                (rubric row: 0–2 strong apps)
+  Revenue potential:    8/10  — top app MRR ~$15k, subscription proven
+                                (rubric row: $5k–$50k)
+  Trend momentum:       9/10  — pytrends +34% YoY, Reddit +28% YoY
+                                (rubric row: positive + >20% YoY)
+  Build effort/reward:  6/10 (subjective) — 3–4 month MVP, push notifs +
+                                offline sync + vernacular (LLM estimate)
 
 Market size:          8/10  — ₹340Cr addressable in India
 Competition density:  7/10  — 12 apps exist, none rated above 3.8
@@ -235,44 +291,51 @@ PRD Writer uses the full research brief + score to generate a complete PRD.
 ### Config files (YAML)
 ```yaml
 # backend/config/agents.yaml — agents for this workflow
-jarvis_ceo
-research_director
-pain_point_hunter
-competitor_mapper
-revenue_estimator
-gap_finder
-trend_validator
-audience_sizer
-product_director
-opportunity_scorer
-prd_writer
+# (top-level keys are departments, not individuals)
+research_dept:
+  research_director        # manager_agent of research_dept_crew
+  pain_point_hunter
+  competitor_mapper
+  revenue_estimator
+  gap_finder
+  trend_validator
+  audience_sizer
+product_dept:
+  product_director         # manager_agent of product_dept_crew
+  opportunity_scorer
+  prd_writer
 ```
 
 ```yaml
 # backend/config/tasks.yaml — tasks for this workflow
-research_coordination_task
-pain_point_research_task
-competitor_mapping_task
-revenue_estimation_task
-gap_finding_task
-trend_validation_task
-audience_sizing_task
+# All task names are prefixed with their department to avoid collisions
+# when the two dept_crews are assembled from the same tasks.yaml.
+
+research_pain_point_task
+research_competitor_mapping_task
+research_revenue_estimation_task
+research_gap_finding_task
+research_trend_validation_task
+research_audience_sizing_task
 research_consolidation_task
-opportunity_scoring_task
-human_gate_task
-prd_writing_task
-output_saving_task
+
+product_opportunity_scoring_task
+product_human_gate_task
+product_prd_writing_task
+product_output_saving_task
 ```
 
 ### Python files
 ```
-backend/crews/research_crew.py      # assembles all agents + tasks, runs the workflow
+backend/crews/jarvis_ceo.py         # Python orchestrator — run_workflow_2(idea)
+backend/crews/dept_crews.py         # build_research_dept_crew() + build_product_dept_crew()
 backend/tools/store_scraper.py      # App Store + Play Store data
 backend/tools/firecrawl_tool.py     # web scraping
 backend/tools/reddit_tool.py        # Reddit research
 backend/memory/obsidian_sync.py     # saves findings to Obsidian vault
 backend/utils/cost_guard.py         # tracks token usage per run
 backend/main.py                     # FastAPI route: POST /workflow/research
+backend/orchestrator/human_gate.py  # pause/resume handshake with FastAPI
 ```
 
 ### Output files
@@ -290,26 +353,19 @@ obsidian-vault/competitors/{competitor}.md
 
 ```yaml
 # ─────────────────────────────────────────
-# LEVEL 1 — CEO
+# CEO NOTE — The CEO is NOT an agent. It is the Python function
+# `run_workflow_2(idea)` in backend/crews/jarvis_ceo.py.
+# See architecture.md, "Agent Hierarchy" section, for the full rationale.
 # ─────────────────────────────────────────
-jarvis_ceo:
-  role: Jarvis Chief Executive Officer
-  goal: >
-    Receive the user's app idea, activate the correct departments,
-    synthesise all outputs, and present a clear final result to the user.
-    Never do research or writing yourself — delegate everything.
-  backstory: >
-    You are Jarvis — a personal AI operating system for a solo mobile app developer.
-    You think like a startup CEO. You decompose problems, delegate to specialists,
-    and synthesise results into clear decisions. You are direct, efficient, and never waste words.
-  llm: deepseek/deepseek-chat
-  allow_delegation: true
-  verbose: true
 
 # ─────────────────────────────────────────
-# LEVEL 2 — DEPARTMENT HEADS
+# DEPARTMENT: research_dept
+# Members of this department are loaded by build_research_dept_crew()
+# in backend/crews/dept_crews.py. The dept head (research_director)
+# becomes the manager_agent of the dept_crew.
 # ─────────────────────────────────────────
 research_director:
+  dept: research_dept
   role: Research Department Director
   goal: >
     Coordinate all 6 research specialists for {idea}.
@@ -321,10 +377,46 @@ research_director:
     synthesise their findings into a clear, evidence-based brief.
   llm: deepseek/deepseek-chat
   allow_delegation: true
-  memory: true
+  memory: false
   verbose: true
 
+# ─────────────────────────────────────────
+# LEVEL 3 — INTERPRETER (added per ADR-0002, grilling session 3, 2026-06-01)
+# Dedicated specialist for converting the user's one-sentence app idea
+# into a structured JSON interpretation. Separated from research_director
+# so the manager-agent system prompt (which says "delegate") does not
+# fight the interpretation task (which says "produce JSON yourself").
+# The director is now coordinator + consolidator only.
+# ─────────────────────────────────────────
+research_interpreter:
+  dept: research_dept
+  role: Idea Interpretation Specialist
+  goal: >
+    Convert the user's one-sentence app idea into a structured JSON
+    interpretation document used by all 6 research specialists.
+  backstory: >
+    You produce structured output, never free-form prose. You never
+    delegate. Your output is parsed downstream — if it is not valid
+    JSON matching the schema, the entire workflow breaks.
+  llm: deepseek/deepseek-chat
+    # ESCAPE HATCH (ADR-0002 Q5, grilling session 3, 2026-06-01):
+    # If 3-retry validation failures exceed 5% over the first 10 runs,
+    # switch to minimax/minimax-m3 (the coding/multimodal tier) — it's
+    # better at strict structured output. Track the failure rate in
+    # backend/output/interpretation_failures.log and re-evaluate.
+  tools: []
+  allow_delegation: false
+  memory: false
+  verbose: true
+
+# ─────────────────────────────────────────
+# DEPARTMENT: product_dept
+# Members of this department are loaded by build_product_dept_crew()
+# in backend/crews/dept_crews.py. The dept head (product_director)
+# becomes the manager_agent of the dept_crew.
+# ─────────────────────────────────────────
 product_director:
+  dept: product_dept
   role: Product Department Director
   goal: >
     Take the research brief for {idea} and produce:
@@ -337,13 +429,14 @@ product_director:
     actually build from.
   llm: deepseek/deepseek-chat
   allow_delegation: true
-  memory: true
+  memory: false
   verbose: true
 
 # ─────────────────────────────────────────
-# LEVEL 3 — RESEARCH SPECIALISTS
+# RESEARCH SPECIALISTS (Level 3 of research_dept)
 # ─────────────────────────────────────────
 pain_point_hunter:
+  dept: research_dept
   role: Pain Point Research Specialist
   goal: >
     Find real user frustrations that prove the problem exists for {idea}.
@@ -356,9 +449,10 @@ pain_point_hunter:
   llm: deepseek/deepseek-chat
   tools: [RedditTool, AppStoreScraperTool, SerperDevTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 competitor_mapper:
+  dept: research_dept
   role: Competitor Analysis Specialist
   goal: >
     Map every existing app that competes with {idea}.
@@ -370,9 +464,10 @@ competitor_mapper:
   llm: deepseek/deepseek-chat
   tools: [AppStoreScraperTool, PlayStoreScraperTool, SerperDevTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 revenue_estimator:
+  dept: research_dept
   role: Revenue Estimation Specialist
   goal: >
     Estimate the revenue opportunity for {idea}.
@@ -386,9 +481,10 @@ revenue_estimator:
   llm: deepseek/deepseek-chat
   tools: [FirecrawlTool, SerperDevTool, AppStoreScraperTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 gap_finder:
+  dept: research_dept
   role: Feature Gap Research Specialist
   goal: >
     Find the features that users of {idea} category apps repeatedly ask for
@@ -401,9 +497,10 @@ gap_finder:
   llm: deepseek/deepseek-chat
   tools: [AppStoreScraperTool, PlayStoreScraperTool, RedditTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 trend_validator:
+  dept: research_dept
   role: Market Trend Validation Specialist
   goal: >
     Validate whether the market for {idea} is growing, stable, or declining.
@@ -416,9 +513,10 @@ trend_validator:
   llm: deepseek/deepseek-chat
   tools: [PytrendsTool, RedditTool, SerperDevTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 audience_sizer:
+  dept: research_dept
   role: Audience Sizing Specialist
   goal: >
     Estimate the total addressable market for {idea} in India and globally.
@@ -431,28 +529,99 @@ audience_sizer:
   llm: deepseek/deepseek-chat
   tools: [RedditTool, SerperDevTool, FirecrawlTool]
   allow_delegation: false
-  memory: true
+  memory: false
 
 # ─────────────────────────────────────────
 # LEVEL 3 — PRODUCT SPECIALISTS
 # ─────────────────────────────────────────
 opportunity_scorer:
+  dept: product_dept
   role: Opportunity Scoring Specialist
   goal: >
-    Score the market opportunity for {idea} out of 50.
-    Use the research brief from Research Director.
-    Score 5 dimensions: market size, competition density (inverted),
-    revenue potential, trend momentum, build effort vs reward.
-    Present score with clear reasoning per dimension.
+    Score the market opportunity for {idea} out of 50 using a HYBRID rubric:
+    4 hard sub-scores extracted from explicit data points via a strict rubric,
+    and 1 subjective sub-score (build effort) estimated from the feature list.
+
+    The 4 hard sub-scores are:
+    - Market size          (rubric-based, data-extracted)
+    - Competition density  (rubric-based, data-extracted)
+    - Revenue potential    (rubric-based, data-extracted)
+    - Trend momentum       (rubric-based, data-extracted)
+
+    The 1 subjective sub-score is:
+    - Build effort vs reward (LLM judgement from feature complexity)
+
+    You MUST extract the underlying numbers first, then map them to 1-10
+    using the published rubric below. You are NOT allowed to assign a
+    sub-score without showing the extracted data point that produced it.
+
+    Default go/no-go threshold is 35/50. This is a placeholder — it
+    must be empirically re-validated after 10+ real runs of Workflow 2.
+    Do NOT change the threshold silently. Log the threshold used at the
+    top of every scoring report.
   backstory: >
     You are a ruthless opportunity evaluator. You score with evidence, not emotion.
     You have seen hundreds of app ideas fail because founders skipped validation.
     Your job is to save the developer time by being honest about what the data says.
+
+    You do NOT trust your own gut. For 4 of 5 dimensions, you extract a
+    hard number from the research brief and look up the score in a fixed
+    rubric table. You are a calculator, not a critic, for those dimensions.
+
+    For build effort, you ARE allowed to use judgement — LLMs are good
+    at reading a feature list and estimating engineering complexity.
+    You mark that sub-score with "(subjective)" so the user knows.
   llm: deepseek/deepseek-chat
+  tools: [ScoringRubricTool]   # wraps the hardcoded rubric table below
   allow_delegation: false
-  memory: true
+  memory: false
+
+# Rubric table — the LLM looks up scores in this, not invents them.
+# Stored in a tool so the LLM cannot hallucinate it.
+# Calibration note: these brackets are placeholders. Adjust after 10+ runs.
+scoring_rubric:
+  market_size:
+    inputs_from: audience_sizer
+    rubric:
+      1: "Total addressable subreddit + keyword volume < 10,000"
+      3: "10,000 – 100,000"
+      5: "100,000 – 500,000"
+      7: "500,000 – 2,000,000"
+      10: "> 2,000,000"
+  competition_density:
+    inputs_from: competitor_mapper
+    invert: true
+    rubric:
+      10: "0–2 apps with rating ≥ 4.0 in category"
+      7:  "3–5 apps with rating ≥ 4.0"
+      4:  "6–10 apps with rating ≥ 4.0"
+      1:  "10+ apps with rating ≥ 4.0"
+  revenue_potential:
+    inputs_from: revenue_estimator
+    rubric:
+      1: "No monetisation model exists in the category"
+      3: "Ads only — eCPM < $1"
+      5: "Freemium present — top app MRR < $5k"
+      7: "Top app MRR $5k–$50k, subscription model proven"
+      10: "Top app MRR > $50k, multiple proven monetisation models"
+  trend_momentum:
+    inputs_from: trend_validator
+    rubric:
+      1:  "pytrends 12-month slope negative, Reddit activity flat"
+      4:  "pytrends flat, Reddit activity growing"
+      7:  "pytrends positive slope, Reddit growth > 20% YoY"
+      10: "pytrends steep positive slope, Reddit growth > 50% YoY"
+  build_effort_vs_reward:
+    inputs_from: LLM judgement on feature list from gap_finder
+    subjective: true
+    rubric:
+      1:  "MVP requires ML, real-time infra, payments, > 6 months solo"
+      4:  "MVP requires 1–2 hard integrations (auth, payments), 3–4 months"
+      7:  "MVP is mostly CRUD + polish, 1–2 months"
+      10: "MVP is a weekend build, near-zero risk"
 
 prd_writer:
+  dept: product_dept
   role: Product Requirements Document Writer
   goal: >
     Write a complete, developer-ready PRD for {idea} using the research brief
@@ -465,7 +634,7 @@ prd_writer:
     because it feeds directly into the design workflow.
   llm: deepseek/deepseek-chat
   allow_delegation: false
-  memory: true
+  memory: false
 ```
 
 ---
@@ -473,70 +642,165 @@ prd_writer:
 ## tasks.yaml — Full Config for This Workflow
 
 ```yaml
-# Research tasks — run in parallel
-pain_point_research_task:
+# Research tasks — interpretation runs first, then 6 specialists fan out in parallel
+# All names are prefixed with `research_` so they cannot collide with
+# product_dept tasks loaded by build_product_dept_crew().
+
+# ─────────────────────────────────────────
+# TASK 0 — Interpretation (revised 2026-06-01 per ADR-0002, grilling session 3)
+# Single LLM call. Produces a structured JSON interpretation that all 6
+# specialists consume as context. Prevents 6-different-research-directions
+# failure mode where the same input produced 6 different research threads.
+#
+# Originally owned by research_director (ADR-0000 Q5). Reassigned to
+# research_interpreter per ADR-0002 Q7 because the manager-agent system
+# prompt ("delegate") was fighting the interpretation prompt ("produce
+# JSON yourself"). The director is now coordinator + consolidator only.
+#
+# Schema is enforced by Pydantic v2 via `output_pydantic` — see
+# backend/contracts/research.py. Retry policy: max_retries=3; on all
+# retries failing, contracts.research.InterpretationValidationError is
+# raised. CEO orchestrator catches it and writes the LLM transcript to
+# backend/output/failed_interpretation_{run_id}.md.
+# ─────────────────────────────────────────
+research_interpretation_task:
+  description: >
+    Interpret the user's one-sentence app idea into a structured brief.
+    Output ONLY this JSON shape — no other text, no markdown fences:
+    {
+      "app_category": "<one of: productivity | health | education | finance | social | utility | other>",
+      "target_user": "<one-sentence demographic, 10-200 chars>",
+      "core_problem": "<one-sentence problem statement, 10-300 chars>",
+      "search_keywords": ["<3-10 keywords all specialists must use>"],
+      "subreddits_to_monitor": ["<1-8 subreddit names, NO 'r/' prefix>"],
+      "app_store_categories": ["<2-6 App Store / Play Store category names>"],
+      "ambiguity_flag": "<null when clear, or 'AMBIGUOUS: <why>' when unclear>"
+    }
+  expected_output: >
+    Valid JSON matching the schema above. No prose, no markdown fences.
+    The next task in this crew depends on this output being parseable.
+  agent: research_interpreter
+  output_pydantic: contracts.research.ResearchInterpretation
+  max_retries: 3
+
+# All 6 specialist tasks below share the interpretation JSON as context.
+# The "Use the interpretation document above" line in each description is
+# the explicit instruction that prevents specialists from re-interpreting.
+
+research_pain_point_task:
   description: >
     Research pain points for this app idea: {idea}
-    Search Reddit (relevant subreddits), ProductHunt discussions,
-    and App Store 1-star reviews for apps in this category.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    search_keywords and subreddits_to_monitor from the interpretation
+    document — do not invent your own.
+
+    Search Reddit (the subreddits listed in the interpretation),
+    ProductHunt discussions, and App Store 1-star reviews for apps
+    in the interpretation's app_category.
     Return the top 10 pain points. For each: the pain point,
     source URL, and a direct quote or evidence.
   expected_output: >
     A numbered list of 10 pain points with source URLs and evidence quotes.
+    Search keywords and subreddits used MUST match the interpretation document.
   agent: pain_point_hunter
+  async_execution: true
+  context: [research_interpretation_task]
 
-competitor_mapping_task:
+research_competitor_mapping_task:
   description: >
     Find all apps that compete with this idea: {idea}
-    Search App Store and Play Store for the top 10 competitors.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_store_categories and search_keywords from the interpretation
+    document — do not invent your own.
+
+    Search App Store and Play Store (in the app_store_categories from
+    the interpretation) for the top 10 competitors.
     For each app return: name, rating, estimated downloads,
     last update date, price, key strength, key weakness.
   expected_output: >
     A markdown table with 10 competitors and all required columns filled.
+    App store categories searched MUST match the interpretation document.
   agent: competitor_mapper
+  async_execution: true
+  context: [research_interpretation_task]
 
-revenue_estimation_task:
+research_revenue_estimation_task:
   description: >
     Estimate the revenue opportunity for this idea: {idea}
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_category and search_keywords from the interpretation document.
+
     Find pricing models of the top competitors.
     Estimate MRR for the top 3 apps based on chart position and review velocity.
     Return: revenue range, top 3 monetisation models used, India pricing context.
   expected_output: >
     Revenue range estimate, monetisation model breakdown, India-specific pricing note.
   agent: revenue_estimator
+  async_execution: true
+  context: [research_interpretation_task]
 
-gap_finding_task:
+research_gap_finding_task:
   description: >
     Find the top 5 feature gaps in apps competing with: {idea}
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_category and search_keywords from the interpretation document.
+
     Read 1-star and 2-star reviews across all competitor apps and Reddit complaints.
     Only report gaps that appear in multiple sources.
     For each gap: description, evidence count, and example quotes.
   expected_output: >
     Top 5 feature gaps with evidence count and example quotes for each.
   agent: gap_finder
+  async_execution: true
+  context: [research_interpretation_task]
 
-trend_validation_task:
+research_trend_validation_task:
   description: >
     Validate market trend for this app idea: {idea}
-    Check Google Trends for 5-year trajectory.
-    Check Reddit for subreddit growth in the last 12 months.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    search_keywords and target_user from the interpretation document.
+
+    Check Google Trends for 5-year trajectory of the search_keywords.
+    Check Reddit for subreddit growth (use subreddits_to_monitor) in the last 12 months.
     Search for recent news about this market.
     Include India-specific signals.
   expected_output: >
     Trend direction (growing/stable/declining), velocity score,
     India-specific trend data, and 3 supporting data points.
+    Search keywords and subreddits used MUST match the interpretation document.
   agent: trend_validator
+  async_execution: true
+  context: [research_interpretation_task]
 
-audience_sizing_task:
+research_audience_sizing_task:
   description: >
     Estimate the audience size for this app idea: {idea}
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    target_user, subreddits_to_monitor, and search_keywords from the
+    interpretation document.
+
     Use subreddit subscriber counts, monthly keyword search volumes,
     and App Store category download estimates.
     Always break out India-specific numbers separately.
   expected_output: >
     Global TAM estimate, India SAM estimate, primary demographic profile
-    (age range, occupation, device type).
+    (age range, occupation, device type). Subreddits and keywords used
+    MUST match the interpretation document.
   agent: audience_sizer
+  async_execution: true
+  context: [research_interpretation_task]
 
 # Consolidation task — runs after all 6 parallel tasks complete
 research_consolidation_task:
@@ -556,31 +820,57 @@ research_consolidation_task:
     A structured research brief in the exact format specified.
     No watered-down summaries — include the strongest evidence from each specialist.
   agent: research_director
-  context: [pain_point_research_task, competitor_mapping_task, revenue_estimation_task,
-            gap_finding_task, trend_validation_task, audience_sizing_task]
+  context: [research_pain_point_task, research_competitor_mapping_task, research_revenue_estimation_task,
+            research_gap_finding_task, research_trend_validation_task, research_audience_sizing_task]
 
-# Scoring task
-opportunity_scoring_task:
+# Scoring task — owned by product_dept
+product_opportunity_scoring_task:
   description: >
     Score the market opportunity for: {idea}
     Use the research brief from the consolidation task.
-    Score each dimension out of 10 with reasoning:
-    - Market size (bigger = higher)
-    - Competition density (less competition = higher)
-    - Revenue potential (clearer model = higher)
-    - Trend momentum (faster growth = higher)
-    - Build effort vs reward (easier build + higher reward = higher)
-    Present in the standard Jarvis score format.
-    End with: "Generate full PRD? (yes / no)"
+
+    STEP 1 — For each of the 4 hard dimensions, you MUST:
+      (a) Extract the specific data point from the research brief
+          (e.g. "subreddit size = 47,000 subscribers",
+                 "competitors with rating ≥ 4.0 = 8 apps",
+                 "top app MRR = $12k",
+                 "pytrends 12-month slope = +18%").
+      (b) Look up the matching bracket in the ScoringRubricTool
+          and report the score from the rubric.
+      (c) Show the data point AND the rubric lookup in the output.
+      (d) You are NOT allowed to assign a hard sub-score without
+          showing both the extracted data and the rubric row that
+          produced it.
+
+    STEP 2 — For the 1 subjective dimension (build effort vs reward):
+      (a) Read the top 3 gaps from the Gap Finder and the top 3
+          pain points from Pain Point Hunter.
+      (b) Estimate Flutter/Swift MVP complexity in weeks of solo work.
+      (c) Score 1–10 with the explicit label "(subjective)" so the
+          user knows this sub-score is LLM judgement, not a rubric.
+
+    STEP 3 — At the TOP of the report, log:
+      "Threshold used: 35/50 (DEFAULT — to be re-validated after 10+ runs)"
+      The user must see this every time so they know the threshold
+      has not been empirically calibrated yet.
+
+    STEP 4 — Present the standard Jarvis score format with the
+    4 hard sub-scores and 1 subjective sub-score, total out of 50.
+
+    STEP 5 — End with: "Generate full PRD? (yes / no)"
   expected_output: >
-    Formatted opportunity score report with dimension scores,
-    reasoning, top gap, revenue estimate, and the human gate question.
+    Formatted opportunity score report. Must contain:
+    - Threshold-used line at the top
+    - For each of 4 hard sub-scores: the extracted data point, the
+      rubric row it mapped to, and the score
+    - For build effort: explicit "(subjective)" label
+    - Total out of 50 and the human gate question
   agent: opportunity_scorer
   context: [research_consolidation_task]
   human_input: true
 
 # PRD task — only runs if user approved
-prd_writing_task:
+product_prd_writing_task:
   description: >
     Write a complete PRD for: {idea}
     Use the research brief and opportunity score as your source material.
@@ -603,33 +893,166 @@ prd_writing_task:
     Minimum 1500 words. Every feature has a user story.
     Screen list is complete and can feed into Workflow 1.
   agent: prd_writer
-  context: [research_consolidation_task, opportunity_scoring_task]
+  context: [research_consolidation_task, product_opportunity_scoring_task]
 ```
 
 ---
 
-## research_crew.py — Structure Reference
+## Crew Assembly — Three Files, Three Jobs
+
+This workflow is split across three files. The split matches the 3-level hierarchy from `docs/architecture.md`: a Python CEO on top, then per-department CrewAI crews, then specialist agents inside each crew.
+
+### File 1 — `backend/crews/jarvis_ceo.py` (the Python orchestrator)
 
 ```python
-# backend/crews/research_crew.py
-# Do not write code until Phase 1 build session.
-# This is the structural reference for Claude Code.
+# backend/crews/jarvis_ceo.py
+# Pure Python — no LLM call. Calls dept_crews and threads their outputs.
+# Implements ADR-0001 Q14 (cost_guard wiring) and Q15 (save brief before
+# the gate; PRD-only recovery path; None-as-decline for ask_user()).
 
-# What this file does:
-# 1. Loads all agents from agents.yaml
-# 2. Loads all tasks from tasks.yaml
-# 3. Assembles the crew with Process.hierarchical
-# 4. Sets manager_agent = jarvis_ceo
-# 5. Runs the crew with kickoff(inputs={"idea": user_input})
-# 6. On completion: saves output to /backend/output/
-# 7. Calls obsidian_sync.py to write memory notes
-# 8. Logs token usage and cost to jarvis.log
+from crews.dept_crews import build_research_dept_crew, build_product_dept_crew
+from orchestrator.human_gate import ask_user_go_no_go
+from memory.obsidian_sync import sync_research, sync_prd
+from utils.cost_guard import start_run, end_run, BudgetExceeded
+from utils.logger import get_logger
 
-# FastAPI route in main.py:
-# POST /workflow/research
-# Body: { "idea": "string" }
-# Returns: { "status": "running", "run_id": "uuid" }
-# Frontend polls GET /workflow/status/{run_id} for updates
+logger = get_logger(__name__)
+
+# Per-run hard cap. Configurable later; Phase 1 ships hardcoded.
+MAX_TOKENS_PER_RUN = 200_000
+
+
+def run_workflow_2(idea: str, run_id: str) -> dict:
+    """Top-level Workflow 2 entry point. Returns a status dict."""
+    # 0. Cost guard — start token tracking for this run
+    start_run(run_id, max_tokens=MAX_TOKENS_PER_RUN)
+
+    try:
+        # 1. Research dept runs — 6 specialists + consolidation task
+        research_crew = build_research_dept_crew()
+        research_brief = research_crew.kickoff(inputs={"idea": idea})
+
+        # 2. Save the brief to Obsidian IMMEDIATELY (ADR-0001 Q15).
+        # The brief is the most expensive output (6 specialist calls).
+        # If the human gate or anything after this fails, the brief
+        # is still durable.
+        sync_research(idea, research_brief)
+
+        # 3. Human gate — opportunity score is inside the brief.
+        # ask_user_go_no_go returns None on timeout (24h default per
+        # human_gate.py); treat None as decline (Q15 refined rec).
+        decision = ask_user_go_no_go(run_id, research_brief["opportunity_score"])
+        if not decision:                              # False OR None → decline
+            logger.info(f"Run {run_id} declined at human gate")
+            return {"status": "declined", "brief": research_brief}
+
+        # 4. Product dept runs — only if user said yes
+        product_crew = build_product_dept_crew()
+        prd = product_crew.kickoff(inputs={
+            "idea": idea,
+            "research_brief": research_brief,
+        })
+
+        # 5. Save PRD to disk + Obsidian
+        sync_prd(idea, prd)
+
+        return {"status": "completed", "prd": prd}
+
+    except BudgetExceeded as e:
+        # Q14: per-run token cap exceeded. Log + write evidence + mark failed.
+        logger.error(f"Run {run_id} exceeded token budget: {e}")
+        with open(f"backend/output/cost_exceeded_{run_id}.txt", "w") as f:
+            f.write(f"Run {run_id} exceeded {MAX_TOKENS_PER_RUN} tokens.\n{e}\n")
+        return {"status": "failed", "reason": "budget_exceeded"}
+
+    finally:
+        # Always log cost — successful, declined, or failed
+        end_run(run_id)
+
+
+def run_workflow_2_prd_only(idea: str, brief_path: str, run_id: str) -> dict:
+    """Recovery path (ADR-0001 Q15): re-run the PRD step using a saved brief.
+
+    Use when product_crew.kickoff() crashed after sync_research() already
+    wrote the brief to Obsidian. Loads brief from disk, skips the expensive
+    research dept call, runs only product_dept_crew.
+    """
+    start_run(run_id, max_tokens=MAX_TOKENS_PER_RUN)
+    try:
+        research_brief = load_brief_from_disk(brief_path)   # helper in obsidian_sync
+        product_crew = build_product_dept_crew()
+        prd = product_crew.kickoff(inputs={
+            "idea": idea,
+            "research_brief": research_brief,
+        })
+        sync_prd(idea, prd)
+        return {"status": "completed", "prd": prd}
+    except BudgetExceeded as e:
+        logger.error(f"PRD-only run {run_id} exceeded budget: {e}")
+        return {"status": "failed", "reason": "budget_exceeded"}
+    finally:
+        end_run(run_id)
+```
+
+### File 2 — `backend/crews/dept_crews.py` (the two CrewAI crews)
+
+```python
+# backend/crews/dept_crews.py
+# Builds the two sub-crews. Each one is its own Crew(process=Process.hierarchical)
+# with its own manager_agent and its own ChromaDB collection.
+
+from crewai import Crew, Process
+from config.loader import load_agents_for, load_tasks_for
+
+def build_research_dept_crew() -> Crew:
+    agents = load_agents_for("research_dept")       # agents.yaml → research_dept section
+    tasks  = load_tasks_for("research_dept")        # tasks.yaml  → research_* tasks
+    return Crew(
+        agents=agents,
+        tasks=tasks,
+        process=Process.hierarchical,
+        manager_agent=agents["research_director"],
+        verbose=True,
+    )
+
+def build_product_dept_crew() -> Crew:
+    agents = load_agents_for("product_dept")
+    tasks  = load_tasks_for("product_dept")         # tasks.yaml → product_* tasks
+    return Crew(
+        agents=agents,
+        tasks=tasks,
+        process=Process.hierarchical,
+        manager_agent=agents["product_director"],
+        verbose=True,
+    )
+```
+
+### File 3 — `backend/orchestrator/human_gate.py` (the pause/resume handshake)
+
+This file is the only place that knows about HTTP. It blocks the CEO orchestrator until the user replies via the dashboard, then returns. See **Question 3 (next)** for the full design of this file.
+
+### FastAPI route
+
+```python
+# backend/main.py
+from fastapi import FastAPI
+from crews.jarvis_ceo import run_workflow_2
+
+app = FastAPI()
+
+@app.post("/workflow/research")
+def start_research(payload: dict):
+    run_id = new_run_id()
+    bg_run(run_workflow_2, payload["idea"], run_id)   # runs in background
+    return {"status": "running", "run_id": run_id}
+
+@app.get("/workflow/status/{run_id}")
+def get_status(run_id: str):
+    return read_run_state(run_id)                     # returns running | waiting_input | done
+
+@app.post("/workflow/reply/{run_id}")
+def user_reply(run_id: str, payload: dict):
+    return store_human_reply(run_id, payload["reply"])    # human_gate.py polls this
 ```
 
 ---
@@ -643,6 +1066,10 @@ prd_writing_task:
 | `reddit_tool.py` | PRAW | Set up via Reddit app (free) |
 | `serper_tool.py` | SerperDev | SERPER_API_KEY |
 | `pytrends_tool.py` | pytrends (Google Trends) | None |
+| `scoring_rubric_tool.py` | hardcoded rubric table from ADR-0000 Q1 (opportunity scoring) | None — pure data, no API |
+| `vision_tool.py` | Claude Vision (Workflow 1, Phase 6) | ANTHROPIC_API_KEY |
+
+> **Source:** Tool list per ADR-0001 Q10 (grilling session 2, 2026-06-01). `scoring_rubric_tool.py` was previously implicit; it is now an explicit deliverable so the LLM cannot hallucinate the rubric table. `vision_tool.py` lives in Phase 6 because Workflow 1 (UI validation) is built there.
 
 ---
 
@@ -650,12 +1077,14 @@ prd_writing_task:
 
 | Model | Calls per run | Est. tokens | Est. cost |
 |-------|--------------|-------------|-----------|
-| DeepSeek | ~15 agent calls | ~80,000 tokens | ~₹8–15 |
+| DeepSeek | ~16 agent calls (1 interpretation + 6 specialists + 1 consolidation + 2 product + ~6 internal) | ~85,000 tokens | ~₹9–16 |
 | MiniMax M3 | 0 (not used here) | — | — |
 | Claude Vision | 0 (not used here) | — | — |
 
-**Estimated cost per Workflow 2 run: ₹8–15**  
-At 30 runs/month: ~₹300–450/month for this workflow alone.
+**Estimated cost per Workflow 2 run: ₹9–16**  
+At 30 runs/month: ~₹300–500/month for this workflow alone.
+
+> **+1 interpretation call** (resolved 2026-06-01, see ADR Q5): a single DeepSeek call producing the structured JSON interpretation brief. ~5 seconds, ~₹0.50 per run. Pays for itself in reproducibility — two runs of the same idea now produce comparable PRDs.
 
 ---
 
@@ -664,7 +1093,11 @@ At 30 runs/month: ~₹300–450/month for this workflow alone.
 Before marking Phase 1 complete:
 
 - [ ] Run with idea: `"A habit tracker for Indian college students"`
+- [ ] `research_interpretation_task` runs first and produces a valid JSON brief (app_category, target_user, core_problem, search_keywords, subreddits_to_monitor, app_store_categories, ambiguity_flag)
+- [ ] All 6 parallel agents receive the interpretation as `context` (check logs for the dependency resolution)
 - [ ] All 6 parallel agents return outputs (check logs)
+- [ ] **Reproducibility test (resolved 2026-06-01, ADR Q5):** run the same idea twice, confirm the interpretation JSON is identical (same keywords, same subreddits, same categories) and the downstream specialist outputs use the same scope
+- [ ] **Ambiguity flag test:** run with idea `"a productivity app"`, confirm `ambiguity_flag` is set to a non-null `AMBIGUOUS: ...` value and the CEO orchestrator surfaces it via `human_gate.ask_user()`
 - [ ] Research consolidation produces a structured brief
 - [ ] Opportunity score appears with correct format
 - [ ] Human gate pauses — workflow does not auto-proceed
