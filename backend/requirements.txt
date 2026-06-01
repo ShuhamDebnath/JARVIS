@@ -1,0 +1,41 @@
+# Jarvis — backend dependencies
+#
+# Version pins are intentional (per ADR-0002 Q6, grilling session 3, 2026-06-01).
+# The interpretation task's Pydantic retry behaviour depends on these
+# specific versions. Do NOT bump these without re-validating:
+#   1. `tests/test_workflow_2_parallelism.py` — async + task_callback
+#   2. `contracts/research.py` — output_pydantic + max_retries semantics
+#   3. The Q2 trigger matrix — fallback conditions
+# Track the corresponding test results in
+# backend/output/version_bump_log_{date}.md before changing anything.
+
+# CrewAI — 0.86.2 is the first stable release with `output_pydantic` and
+# task-level `max_retries`. 0.95+ adds deprecation warnings for explicit
+# `memory=False` (we omit the arg instead — see architecture.md "Per-
+# Department Crew Isolation").
+crewai==0.86.2
+crewai-tools==0.17.0
+
+# Pydantic v2 — v1 error messages confuse LLMs ("ensure this value has at
+# least 3 items" → "List should have at least 3 items"). v2 is what
+# `contracts/research.py` is written against.
+pydantic==2.6.4
+
+# Anthropic SDK — used for the Workflow 1 (Phase 6) Vision LLM only.
+# Phase 0a does not require this; install when needed.
+# anthropic==0.39.0
+
+# OpenAI SDK — OpenRouter exposes an OpenAI-compatible API.
+openai==1.30.1
+
+# .env loader
+python-dotenv==1.0.1
+
+# ----------------------------------------------------------------------------
+# Deferred to Phase 0b (before Phase 1 starts)
+# ----------------------------------------------------------------------------
+# firecrawl-py
+# praw
+# pytrends
+# playwright
+# beautifulsoup4
