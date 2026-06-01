@@ -9,27 +9,66 @@
 # Track the corresponding test results in
 # backend/output/version_bump_log_{date}.md before changing anything.
 
-# CrewAI — 0.86.2 is the first stable release with `output_pydantic` and
+# CrewAI — 0.86.0 is the first stable release with `output_pydantic` and
 # task-level `max_retries`. 0.95+ adds deprecation warnings for explicit
 # `memory=False` (we omit the arg instead — see architecture.md "Per-
 # Department Crew Isolation").
-crewai==0.86.2
+#
+# Version bump log: 0.86.2 → 0.86.0 on 2026-06-02. 0.86.2 was never
+# published to PyPI; the original 0.86.2 pin in this file was a typo.
+# See backend/output/version_bump_log_2026-06-02.md for the rationale
+# and re-validation plan. Per ADR-0002 Q6.
+crewai==0.86.0
 crewai-tools==0.17.0
 
 # Pydantic v2 — v1 error messages confuse LLMs ("ensure this value has at
 # least 3 items" → "List should have at least 3 items"). v2 is what
-# `contracts/research.py` is written against.
-pydantic==2.6.4
+# `contracts/research.py` is written against. Pinned to 2.9.2 (latest 2.x
+# stable as of 2026-06-02) — must be >= 2.7.0 for crewai 0.86.0's
+# instructor dep to resolve.
+#
+# Version bump log: 2.6.4 → 2.9.2 on 2026-06-02. Original 2.6.4 pin was
+# below the floor (2.7.0) that crewai 0.86.0 requires via instructor.
+# See backend/output/version_bump_log_2026-06-02.md for the rationale
+# and re-validation plan. Per ADR-0002 Q6.
+pydantic==2.9.2
 
 # Anthropic SDK — used for the Workflow 1 (Phase 6) Vision LLM only.
 # Phase 0a does not require this; install when needed.
 # anthropic==0.39.0
 
 # OpenAI SDK — OpenRouter exposes an OpenAI-compatible API.
-openai==1.30.1
+# Version bump log: 1.30.1 → 1.99.9 on 2026-06-02. Original 1.30.1 pin
+# was below the floor (1.40.0) that crewai 0.86.0's litellm dep
+# requires transitively. See backend/output/version_bump_log_2026-06-02.md
+# for the rationale and re-validation plan. Per ADR-0002 Q6.
+openai==1.99.9
 
 # .env loader
 python-dotenv==1.0.1
+
+# setuptools — crewai 0.86.0 imports `pkg_resources` at module load time
+# (via crewai.telemetry.telemetry). `pkg_resources` was removed from the
+# Python stdlib in 3.12 and removed from setuptools in 81.0. Pin to <81
+# so `pkg_resources` is still importable. See
+# backend/output/version_bump_log_2026-06-02.md.
+setuptools>=68.0,<81
+
+# FastAPI — backend HTTP server. Pinned to 0.136.x (the release that
+# shipped the modern `lifespan=` kwarg on FastAPI() with full deprecation
+# of the old `@app.on_event("startup")` decorators — backend/main.py
+# uses lifespan).
+#
+# Version bump log: 0.136.3 → 0.136.3 on 2026-06-02 (first tracked pin;
+# was previously installed transitively as a crewai extra). See
+# backend/output/version_bump_log_2026-06-02.md.
+fastapi==0.136.3
+
+# Uvicorn — ASGI server that runs `main:app`. Pinned to 0.48.x (the
+# release that supports the `[standard]` extras group used in dev).
+# Version bump log: 0.48.0 → 0.48.0 on 2026-06-02 (first tracked pin).
+# See backend/output/version_bump_log_2026-06-02.md.
+uvicorn==0.48.0
 
 # ----------------------------------------------------------------------------
 # Deferred to Phase 0b (before Phase 1 starts)
