@@ -40,12 +40,18 @@ This is a private single-user system. It is not a SaaS product. There is no auth
 
 > **Update this section every time a phase completes.**
 
-**Active phase:** Phase 0a — Minimum to run hello-world crew  
-**Currently building:** Folder structure, env setup, hello-world CrewAI crew, `human_gate.py` smoke test  
-**Step 5 done (2026-06-02):** `backend/main.py` FastAPI stub with `/health` + env_validator on startup, `backend/utils/logger.py` shared logger, fastapi/uvicorn pinned. Smoke-tested — server starts, `/health` returns 200. Follow-up flags in `backend/output/followups_2026-06-02.md` (gitignored, working-tree only).  
-**Step 5 follow-ups resolved (2026-06-02, ~01:55 IST):** `.venv` re-created on `cpython-3.11.15` via `uv venv --python 3.11` (old venv deleted in the final cleanup — 893M reclaimed). `.python-version` added at project root with `3.11` so future `uv venv` auto-pins. The `pkg_resources` DeprecationWarning is gone as a side effect of being on 3.11 (where `pkg_resources` is stdlib). Flag 3 warnings (`SelectableGroups` from opentelemetry, `Pydantic V1 @validator` from crewai) silenced via `warnings.filterwarnings` in `backend/__init__.py`. `.env` and `.env.example` decorative lines prefixed with `#` to clear the 8 dotenv parse warnings. jarvis.log on `uvicorn backend.main:app` is now fully clean — only the env_validator report and the expected CRITICAL/INFO lines remain.
+**Active phase:** ✅ **Phase 0a — complete (2026-06-02).** The hello-world crew runs end-to-end through `POST /crews/hello?mock=true` returning a validated `HelloOutput` Pydantic contract, the `human_gate.py` handshake has its own four-case async test suite, and the full pytest suite is **8/8 green in 3.27s**. Five logical commits closed the sub-phase (`refactor:` shared logger, `feat: hello-world crew`, `feat: /crews/hello route`, `test: phase 0a coverage`, `docs: phase 0a complete`).  
+**Currently building:** Nothing — Phase 0a is closed. Awaiting go-ahead for **Phase 0b** (Workflow 2 prep: install firecrawl-py, praw, pytrends, playwright, store scrapers).  
+**Phase 0a closeout summary (2026-06-02):**  
+- **Step 3 (2026-06-02, ~09:45 IST):** `backend/orchestrator/human_gate.py` migrated from stdlib `logging` to the shared `backend/utils/logger.py` module — single commit.  
+- **Steps 4–7:** Pydantic `HelloOutput` contract (with the latent CrewAI 0.86.0 `__annotations__` crash defused in both `hello.py` and `research.py` by NOT using PEP 563), `agents.yaml` + `tasks.yaml` for the hello agent/task, `backend/crews/hello_crew.py` factory with `Process.sequential`, and a `MockLLM` fixture in `tests/conftest.py` that subclasses `crewai.llm.LLM` to drive the crew without burning an OpenRouter call. `tests/test_hello_crew.py` exercises the full crew.  
+- **Step 8:** `POST /crews/hello?mock=true` wired into `backend/main.py`. `?mock=true` returns 200 with a canned `HelloOutput` body; absent or `?mock=false` returns 503 with a structured `{"error", "hint", "phase"}` envelope whose `hint` is the dashboard's recovery copy. Curl-verified live on `127.0.0.1:8765`.  
+- **Step 9:** `tests/test_human_gate.py` with four cases — happy-path async, timeout async with timing bounds, KeyError sync, ValueError async.  
+- **Step 10:** `tests/test_phase0a_e2e.py` with three `TestClient` cases (GET `/health`, POST mock, POST 503 empty + `?mock=false`). Full suite is 8/8 green.  
+- **Steps 11–12 (this commit):** `docs/roadmap.md` and this section updated; 5-commit series finalised.  
 **Next sub-phase:** Phase 0b — Workflow 2 prep (install firecrawl-py, praw, pytrends, playwright, store scrapers)  
-**Next phase:** Phase 1 — Workflow 2 (Research → PRD)
+**Next phase:** Phase 1 — Workflow 2 (Research → PRD)  
+**Note on the Frontend WorkflowCard rule:** The "How to Add a New Workflow" rule that says "Add a `WorkflowCard` in the frontend dashboard" only applies **starting from Workflow 2** (Phase 1 onward). The Next.js dashboard itself is built in Phase 4, so Phase 0a's hello-world crew does not need a `WorkflowCard` and does not need a `ComingSoon` placeholder. The only dashboard-facing contract in Phase 0a is the `?mock=true` query parameter on `/crews/hello`, which the Phase 4 dashboard will surface verbatim.
 
 Refer to `docs/roadmap.md` for the full phase breakdown and completion checklist.
 

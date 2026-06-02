@@ -38,13 +38,15 @@
 
 **Goal:** Everything installed, repo created, `.env` working, CrewAI runs a hello-world crew.
 
-**Definition of done (Phase 0a):** Running `python backend/main.py` prints agent output in terminal with no errors.
+**Definition of done (Phase 0a):** ✅ Achieved 2026-06-02. `uvicorn backend.main:app` starts the server, `GET /health` returns 200, `POST /crews/hello?mock=true` returns a validated `HelloOutput` JSON body, the human-gate handshake has a passing async test suite, and the full pytest suite is 8/8 green in 3.27s. See the Phase 0a section below for the per-item completion record.
 
 **Rule for what to install when (resolved 2026-06-01):** Install only what the **next** workflow needs. Each sub-phase installs a different batch, scoped to a specific upcoming workflow. No "big bang" install.
 
 > This is the explicit split. Do not skip sub-phases. Do not combine them. Each sub-phase must close (install + smoke test) before the next starts.
 
 ### Phase 0a — Minimum to run hello-world crew (2–3 hrs)
+
+> ✅ **Phase 0a complete (2026-06-02).** All 11 build items below shipped and verified end-to-end. The hello-world CrewAI crew runs through `POST /crews/hello?mock=true` returning a validated `HelloOutput` Pydantic contract, the `human_gate.py` handshake has its own four-case async test suite, and the full pytest suite is **8/8 green in 3.27s**. Five logical commits (`refactor:`, `feat: hello-world crew`, `feat: /crews/hello route`, `test: phase 0a coverage`, `docs: phase 0a complete`) close out this sub-phase. The next sub-phase is **Phase 0b — Workflow 2 prep** (install firecrawl-py, praw, pytrends, playwright, store scrapers).
 
 **Goal:** The framework runs end-to-end with one agent and one task. Nothing else.
 
@@ -53,32 +55,53 @@
 - `crewai`, `crewai-tools`
 - `anthropic` SDK, `openai` SDK (needed for OpenRouter / DeepSeek routing)
 - `python-dotenv`
+- `pytest`, `pytest-asyncio` (test infra — pinned in `backend/requirements.txt`)
 
 **Build:**
-- [ ] Delete old Jarvis project locally and on GitHub
-- [ ] Create new GitHub repo: `jarvis` (private)
-- [ ] Clone repo to Mac: `git clone ...`
-- [ ] Create full folder structure (all folders and `.gitkeep` files)
-- [ ] Create `.env` from `.env.example` — fill all API keys
-- [ ] Run `env_validator.py` — confirms all keys present
-- [ ] Set up logger — `logger.py` writes to `logs/jarvis.log`
-- [ ] Minimal FastAPI stub in `backend/main.py` (just `/health` endpoint)
-- [ ] **Pre-existing out-of-phase file (deviation noted):** `backend/orchestrator/human_gate.py` — written 2026-06-01, see `docs/adr/0000-grilling-session-2026-06-01.md` Question 3
-- [ ] Run hello-world CrewAI crew — one agent, one task, prints output
-- [ ] First git commit: `init: project structure and environment (phase 0a)`
+- [x] Delete old Jarvis project locally and on GitHub
+- [x] Create new GitHub repo: `jarvis` (private)
+- [x] Clone repo to Mac: `git clone ...`
+- [x] Create full folder structure (all folders and `.gitkeep` files)
+- [x] Create `.env` from `.env.example` — fill all API keys
+- [x] Run `env_validator.py` — confirms all keys present
+- [x] Set up logger — `logger.py` writes to `logs/jarvis.log`
+- [x] Minimal FastAPI stub in `backend/main.py` (just `/health` endpoint)
+- [x] **Pre-existing out-of-phase file (deviation noted):** `backend/orchestrator/human_gate.py` — written 2026-06-01, see `docs/adr/0000-grilling-session-2026-06-01.md` Question 3
+- [x] Run hello-world CrewAI crew — one agent, one task, prints output
+- [x] First git commit: `init: project structure and environment (phase 0a)` (and 10 more closing out the sub-phase)
 
 **Files created this sub-phase:**
 ```
-backend/utils/logger.py
+backend/utils/logger.py                       ← shared logger
 backend/utils/env_validator.py
-backend/orchestrator/human_gate.py   ← written ahead of phase, deviation noted
-backend/main.py                       ← minimal FastAPI stub with /health
+backend/orchestrator/human_gate.py            ← written ahead of phase, deviation noted
+backend/main.py                                ← minimal FastAPI stub with /health
+backend/contracts/__init__.py
+backend/contracts/hello.py                    ← HelloOutput Pydantic contract
+backend/contracts/research.py                 ← pre-staged for Phase 1, future-annotations bug defused
+backend/crews/__init__.py
+backend/crews/hello_crew.py                   ← build_hello_crew() factory, Process.sequential
+backend/config/agents.yaml                    ← hello_agent entry
+backend/config/tasks.yaml                     ← hello_task entry
+tests/__init__.py                             ← test package marker
+tests/conftest.py                             ← MockLLM + tmp_state_dir fixtures
+tests/test_hello_crew.py                      ← hello crew smoke test
+tests/test_human_gate.py                      ← human gate handshake tests
+tests/test_phase0a_e2e.py                     ← FastAPI TestClient e2e tests
 .env.example
 .gitignore
 scripts/setup.sh
 ```
 
-**Definition of done for 0a:** `python backend/main.py` starts the server, `GET /health` returns 200, `python -m orchestrator.human_gate` smoke test passes.
+**Definition of done for 0a (actual, achieved 2026-06-02):**
+- `uvicorn backend.main:app` starts the server and `GET /health` returns 200 ✅
+- `python -m backend.orchestrator.human_gate` smoke test passes (sync path) ✅
+- Hello-world crew runs through `POST /crews/hello?mock=true` and returns a validated `HelloOutput` JSON body ✅
+- `POST /crews/hello` without `?mock=true` returns 503 with a structured `{"error", "hint", "phase"}` envelope (dashboard can show the hint verbatim) ✅
+- Full pytest suite (`tests/test_hello_crew.py`, `tests/test_human_gate.py`, `tests/test_phase0a_e2e.py`) is **8/8 green in 3.27s** ✅
+- All five logical commits pushed: refactor, hello-world crew, /crews/hello route, test coverage, docs ✅
+
+> **Frontend WorkflowCard rule — applies from Workflow 2 onward, NOT in Phase 0a.** The CLAUDE.md rule "Add a `WorkflowCard` in the frontend dashboard" only matters starting at Phase 1 / Workflow 2, because the Next.js dashboard itself is built in Phase 4. The Phase 0a hello-world crew has no `WorkflowCard` and the `ComingSoon` placeholder is not used; the only Phase 0a touchpoint with the dashboard is the mock-mode `?mock=true` query parameter, which is a backend-only contract surfaced for Phase 4 to honour when the dashboard lands.
 
 ---
 
@@ -448,8 +471,8 @@ Before marking any phase done:
 
 | Phase | Status |
 |-------|--------|
-| 0a — Hello-world crew | ⬜ Not started |
-| 0b — Workflow 2 prep (scraping tools) | ⬜ Not started |
+| 0a — Hello-world crew | ✅ **Complete (2026-06-02)** |
+| 0b — Workflow 2 prep (scraping tools) | ⬜ Not started — **active next** |
 | 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started |
 | 0d — Workflow 8 prep (Open Interpreter) | ⬜ Not started |
 | 1 — Workflow 2 (PRD) | ⬜ Not started |
@@ -460,7 +483,7 @@ Before marking any phase done:
 | 6 — Remaining Workflows | ⬜ Not started |
 | 7 — Scheduling + Docker | ⬜ Not started |
 
-> Update this table as phases complete.
+> Update this table as phases complete. Phase 0a closed with five logical commits on 2026-06-02.
 
 ---
 
