@@ -292,7 +292,12 @@ def _build_agent(agent_key: str, agents_cfg: dict[str, Any], llm: Any = None) ->
     return Agent(**kwargs)
 
 
-def _build_task(task_key: str, tasks_cfg: dict[str, Any], agent: Agent) -> Task:
+def _build_task(
+    task_key: str,
+    tasks_cfg: dict[str, Any],
+    agent: Agent,
+    built_tasks: Optional[dict[str, Task]] = None,
+) -> Task:
     """Build one crewai.Task from the YAML config.
 
     Per tasks.yaml schema:
@@ -301,10 +306,18 @@ def _build_task(task_key: str, tasks_cfg: dict[str, Any], agent: Agent) -> Task:
       - `output_pydantic:` is a dotted Python path; we resolve to
         the Pydantic class so CrewAI can validate the LLM output
         against the schema at task completion time.
-      - `context:` is a list of task-key strings; we leave it as-is
-        because CrewAI accepts strings and resolves them to Task
-        objects at kickoff time (it looks up the tasks in the same
-        crew by name).
+      - `context:` is a list of task-key strings. We resolve each
+        string to the actual Task instance from `built_tasks`
+        BEFORE calling Task(**kwargs). This is the load-bearing
+        fix for the P1.4 build bug: CrewAI 0.86.0's Pydantic-v2
+        `@model_validator(mode="before")` on Task
+        (crewai/task.py:121-124) calls `process_config(values, cls)`
+        and crashes with `AttributeError: 'str' object has no
+        attribute 'get'` (crewai/utilities/config.py:19) if any
+        item in `context` is a string instead of a Task instance.
+        The Pydantic-v2 + CrewAI 0.86.0 contract is: `context` must
+        be a list of Task instances at Task() construction time.
+        Resolving up-front sidesteps the whole broken-coercion path.
       - `async_execution: true` is passed through verbatim — that
         is what triggers the 6 research specialists to fan out
         in parallel (per ADR-0002 Q1).
@@ -318,9 +331,26 @@ def _build_task(task_key: str, tasks_cfg: dict[str, Any], agent: Agent) -> Task:
         task_key: Top-level key in tasks.yaml (e.g. "research_pain_point_task").
         tasks_cfg: The parsed tasks.yaml dict.
         agent: The Agent instance this task should run on.
+        built_tasks: Registry of already-built Task instances keyed
+            by task_key. Used to resolve `context:` string names to
+            actual Task instances BEFORE Task(**kwargs) runs. The
+            calling factory MUST pass this — populate it
+            incrementally inside the build loop so that a task with
+            `context: [<earlier_task_key>]` finds its dependency.
+            If a context string is NOT in this registry, the build
+            fails loud with KeyError (typically a YAML/ordering
+            bug, or a cross-department context reference that
+            belongs in the CEO orchestrator's wiring, not here).
 
     Returns:
         A `crewai.Task` instance ready to be added to a crew.
+
+    Raises:
+        KeyError: If `task_key` is not in `tasks_cfg`, or if a
+            `context:` string references a task not yet in
+            `built_tasks` (i.e. either declared before its
+            dependency in the build order, or referencing a
+            task outside this crew).
     """
     if task_key not in tasks_cfg:
         raise KeyError(
@@ -336,6 +366,52 @@ def _build_task(task_key: str, tasks_cfg: dict[str, Any], agent: Agent) -> Task:
     # the real Pydantic class.
     if "output_pydantic" in kwargs and kwargs["output_pydantic"]:
         kwargs["output_pydantic"] = _resolve_pydantic_class(kwargs["output_pydantic"])
+    # P1.4 fix: resolve `context:` from a list of task-key strings to
+    # a list of Task instances BEFORE calling Task(**kwargs). The
+    # `built_tasks` registry is populated incrementally in the
+    # factory's build loop, so a task that depends on an earlier
+    # task will find it in the registry. If a string is missing
+    # from the registry, the build is broken (cross-dept ref or
+    # ordering bug) and we fail loud with a clear message.
+    if "context" in kwargs and kwargs["context"]:
+        if built_tasks is None:
+            # Defensive: the factory should always pass built_tasks.
+            # If a caller forgets, we can't safely resolve, so fail
+            # loud instead of silently producing a broken crew.
+            raise ValueError(
+                f"task {task_key!r} has context={kwargs['context']!r} but "
+                f"no built_tasks registry was passed to _build_task. "
+                f"The factory must pass built_tasks=task_dict so context "
+                f"can be resolved to Task instances (CrewAI 0.86.0 Pydantic "
+                f"v2 contract — see P1.4 ADR).",
+            )
+        raw_context = list(kwargs["context"])
+        resolved: list[Task] = []
+        for c in raw_context:
+            if isinstance(c, Task):
+                # Already a Task (e.g. test double injected it). Pass through.
+                resolved.append(c)
+                continue
+            if not isinstance(c, str):
+                # Defensive: a non-string, non-Task object is a YAML
+                # typo we can't reason about.
+                raise TypeError(
+                    f"task {task_key!r} context item {c!r} is {type(c).__name__}, "
+                    f"expected str (task_key) or Task. Fix tasks.yaml.",
+                )
+            if c not in built_tasks:
+                raise KeyError(
+                    f"task {task_key!r} context references {c!r} which has "
+                    f"not been built yet. Either: (a) the dependent task "
+                    f"is declared AFTER {task_key!r} in the task-key list "
+                    f"(_RESEARCH_TASK_KEYS / _PRODUCT_TASK_KEYS) — re-order "
+                    f"so dependencies come first, or (b) the context "
+                    f"references a task in a DIFFERENT crew (cross-department "
+                    f"wiring is the CEO orchestrator's job, not this "
+                    f"factory — see ADR-0000 Q3).",
+                )
+            resolved.append(built_tasks[c])
+        kwargs["context"] = resolved
     log.debug(
         "task %r built: agent=%r async=%s context=%s",
         task_key, agent.role,
@@ -397,26 +473,37 @@ def build_research_dept_crew(
         for key in _RESEARCH_AGENT_KEYS
     }
 
-    # Build all 8 tasks into a dict FIRST, then wire up `context:`
-    # references by looking up the dependent Task objects. We cannot
-    # pass `context=` as a list of task-key strings directly to the
-    # Task constructor — the field is typed `Optional[List["Task"]]`,
-    # so Pydantic rejects raw strings and the broken coercion path
-    # crashes with `AttributeError: 'str' object has no attribute
-    # 'get'` deep inside crewai.utilities.config.process_config.
-    # Resolving to actual Task instances up front sidesteps that
-    # whole path. (CrewAI 0.86.0 quirk — see ADR for the rationale
-    # to be appended in P1.5 if this comes up again.)
+    # Build all 8 tasks into a dict incrementally, threading
+    # `task_dict` into _build_task as it grows so each task can
+    # resolve its `context:` string names to actual Task instances
+    # BEFORE the Task(**kwargs) call. We cannot pass `context=` as
+    # a list of task-key strings directly to the Task constructor
+    # — the field is typed `Optional[List["Task"]]`, so Pydantic
+    # rejects raw strings and the broken coercion path crashes
+    # with `AttributeError: 'str' object has no attribute 'get'`
+    # deep inside crewai.utilities.config.process_config.
+    # (CrewAI 0.86.0 + Pydantic v2 quirk — see P1.4 ADR.)
+    # The task ordering in _RESEARCH_TASK_KEYS is therefore
+    # load-bearing: research_interpretation_task must be first
+    # (no context, runs first), then the 6 specialists (each
+    # depends on the interpretation), then research_consolidation_task
+    # (depends on all 6 specialists).
     task_dict: dict[str, Task] = {}
     for task_key in _RESEARCH_TASK_KEYS:
         task_cfg = tasks_cfg[task_key]
         agent_key = task_cfg["agent"]
-        task_dict[task_key] = _build_task(task_key, tasks_cfg, agents[agent_key])
+        task_dict[task_key] = _build_task(
+            task_key, tasks_cfg, agents[agent_key],
+            built_tasks=task_dict,
+        )
 
-    # Now wire context. The YAML stores context as a list of task-key
-    # strings; we resolve each string to the corresponding Task in
-    # `task_dict` and assign the list to `task.context` (the field
-    # CrewAI reads at execution time — see crewai/task.py:330-339).
+    # Defensive double-check: re-wire `task.context` from the YAML
+    # after construction. With the _build_task fix above, context
+    # is already resolved to Task instances at this point — this
+    # loop is idempotent (overwrites with the same instances) and
+    # acts as a safety net if _build_task is ever called without
+    # `built_tasks=`. Also produces a useful DEBUG log line for
+    # observability when `context` is wired.
     for task_key, task in task_dict.items():
         context_keys = tasks_cfg[task_key].get("context", []) or []
         if context_keys:
@@ -433,11 +520,23 @@ def build_research_dept_crew(
     # `memory=True` would (a) reintroduce the per-run contamination
     # failure mode that ADR-0000 Q2's per-dept isolation was meant
     # to prevent, and (b) trigger deprecation warnings on crewai>=0.95.
+    #
+    # CrewAI 0.86.0 contract: when `process=Process.hierarchical`
+    # AND `manager_agent=` is set, the manager agent MUST NOT also
+    # appear in the `agents=` list — Pydantic v2 raises
+    # `ValidationError: Manager agent should not be included in
+    # agents list` otherwise. The manager is the head of the
+    # hierarchy; the `agents` list is the workers it delegates to.
+    # (Found while fixing P1.4 — the AttributeError on Task
+    # construction masked this; once Task() builds, Crew()
+    # validation surfaces it.)
+    _manager_key = "research_director"
+    worker_agents = [a for k, a in agents.items() if k != _manager_key]
     crew_kwargs: dict[str, Any] = {
-        "agents": list(agents.values()),
+        "agents": worker_agents,
         "tasks": tasks,
         "process": Process.hierarchical,
-        "manager_agent": agents["research_director"],
+        "manager_agent": agents[_manager_key],
         "verbose": True,
     }
     if task_callback is not None:
@@ -447,10 +546,11 @@ def build_research_dept_crew(
 
     crew = Crew(**crew_kwargs)
     log.info(
-        "research_dept_crew built: %d agents, %d tasks, "
-        "process=Process.hierarchical, manager_agent=research_director, "
+        "research_dept_crew built: %d workers, %d tasks, "
+        "process=Process.hierarchical, manager_agent=research_director "
+        "(excluded from workers list per CrewAI 0.86.0 contract), "
         "memory=OMITTED (CrewAI default False)",
-        len(agents), len(tasks),
+        len(worker_agents), len(tasks),
     )
     return crew
 
@@ -501,26 +601,43 @@ def build_product_dept_crew(
         for key in _PRODUCT_AGENT_KEYS
     }
 
-    # Same two-pass context-resolution pattern as research_dept_crew —
-    # see the longer comment in build_research_dept_crew for the
-    # crewai 0.86.0 Pydantic quirk that forces this.
+    # Same context-resolution pattern as research_dept_crew — see the
+    # longer comment in build_research_dept_crew for the CrewAI
+    # 0.86.0 Pydantic quirk that forces this. NOTE: the product
+    # tasks have cross-department context references
+    # (research_consolidation_task) that are NOT in the product
+    # task_dict. Those will raise KeyError here — that's the right
+    # behaviour, surfacing a YAML/architecture issue that P1.15
+    # needs to address (cross-dept context is the CEO's job, not
+    # this factory's — see ADR-0000 Q3).
     task_dict: dict[str, Task] = {}
     for task_key in _PRODUCT_TASK_KEYS:
         task_cfg = tasks_cfg[task_key]
         agent_key = task_cfg["agent"]
-        task_dict[task_key] = _build_task(task_key, tasks_cfg, agents[agent_key])
+        task_dict[task_key] = _build_task(
+            task_key, tasks_cfg, agents[agent_key],
+            built_tasks=task_dict,
+        )
 
+    # Defensive double-check — same rationale as in
+    # build_research_dept_crew.
     for task_key, task in task_dict.items():
         context_keys = tasks_cfg[task_key].get("context", []) or []
         if context_keys:
             task.context = [task_dict[k] for k in context_keys]
     tasks: list[Task] = list(task_dict.values())
 
+    # CrewAI 0.86.0 contract (same as research_dept_crew): the
+    # manager agent MUST NOT appear in the `agents=` list when
+    # `process=Process.hierarchical` + `manager_agent=` are set.
+    # Exclude product_director from the workers list.
+    _manager_key = "product_director"
+    worker_agents = [a for k, a in agents.items() if k != _manager_key]
     crew_kwargs: dict[str, Any] = {
-        "agents": list(agents.values()),
+        "agents": worker_agents,
         "tasks": tasks,
         "process": Process.hierarchical,
-        "manager_agent": agents["product_director"],
+        "manager_agent": agents[_manager_key],
         "verbose": True,
     }
     if task_callback is not None:
@@ -528,10 +645,11 @@ def build_product_dept_crew(
 
     crew = Crew(**crew_kwargs)
     log.info(
-        "product_dept_crew built: %d agents, %d tasks, "
-        "process=Process.hierarchical, manager_agent=product_director, "
+        "product_dept_crew built: %d workers, %d tasks, "
+        "process=Process.hierarchical, manager_agent=product_director "
+        "(excluded from workers list per CrewAI 0.86.0 contract), "
         "memory=OMITTED (CrewAI default False)",
-        len(agents), len(tasks),
+        len(worker_agents), len(tasks),
     )
     return crew
 
@@ -634,8 +752,17 @@ def run_research_crew_with_retry(
     attempt = 0
     last_crew_output: Any = None
     last_error: Optional[str] = None
-    transcripts: list[dict] = []   # one {attempt, error} dict per failed attempt
-    errors: list[dict] = []         # one Pydantic error dict per failed attempt
+    # Loosened to `list[Any]` (was `list[dict]`) because the
+    # two append sites pass heterogeneous shapes:
+    #   1. `errors.append(e.errors())` — `e.errors()` is typed
+    #      `list[ErrorDetails]` by Pydantic v2.
+    #   2. `errors.append([{"msg": last_error}])` — a list-wrapped
+    #      single-key dict for the no-Pydantic-error case.
+    # The CEO post-mortem serialises these to JSON in
+    # failed_interpretation_{run_id}.md, so structural variance
+    # here is acceptable — we just need a permissive container.
+    transcripts: list[dict[str, Any]] = []   # one {attempt, error} dict per failed attempt
+    errors: list[Any] = []                  # one Pydantic error list per failed attempt
 
     while attempt < max_retries:
         attempt += 1
