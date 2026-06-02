@@ -55,6 +55,7 @@ from backend.utils.cost_guard import (
     end_run,
     start_run,
 )
+from backend.memory import RunStatus, write_run_status
 from backend.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -325,6 +326,15 @@ async def run_workflow_2(
     """
     run_id = run_id or new_run_id()
     log.info("run_workflow_2 START — run_id=%s idea=%r", run_id, app_idea)
+    # Mirror STARTED to the Obsidian vault so the dev sees the run
+    # in their vault the moment it kicks off. write_run_status is
+    # already defensive against OSError — the workflow run is not
+    # affected if the vault can't be written.
+    write_run_status(
+        run_id, RunStatus.STARTED,
+        note=f"app_idea={app_idea!r}",
+        meta={"app_idea": app_idea},
+    )
 
     # Open the cost-guard budget window. start_run() is idempotent
     # (a retry resets the counter to zero). 200k cap is hardcoded
@@ -337,6 +347,11 @@ async def run_workflow_2(
             research_crew = build_research_dept_crew()
         except Exception as e:
             log.error("run_workflow_2: failed to build research_dept_crew: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"research_crew_build_failed: {e}",
+                meta={"reason": "research_crew_build_failed", "error": str(e)},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -355,6 +370,15 @@ async def run_workflow_2(
             # know the run_id).
             e.run_id = run_id
             transcript_path = _write_failed_interpretation(run_id, e.transcripts)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"interpretation_validation_failed after {len(e.transcripts)} attempts",
+                meta={
+                    "reason": "interpretation_validation_failed",
+                    "attempts": len(e.transcripts),
+                    "transcript_path": str(transcript_path),
+                },
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -364,6 +388,11 @@ async def run_workflow_2(
             }
         except BudgetExceeded as e:
             log.error("run_workflow_2: budget exceeded on research crew: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded on research crew",
+                meta={"reason": "budget_exceeded", "phase": "research"},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -372,6 +401,11 @@ async def run_workflow_2(
             }
         except Exception as e:
             log.error("run_workflow_2: research crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"research_crew_crashed: {e}",
+                meta={"reason": "research_crew_crashed", "error": str(e)},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -384,6 +418,11 @@ async def run_workflow_2(
             "run_workflow_2: research complete — brief is %d chars",
             len(research_brief),
         )
+        write_run_status(
+            run_id, RunStatus.RESEARCH_COMPLETE,
+            note=f"research brief is {len(research_brief)} chars",
+            meta={"research_brief_chars": len(research_brief)},
+        )
 
         # ---- Step 2: Product scoring only (human gate comes after) -----
         try:
@@ -393,6 +432,15 @@ async def run_workflow_2(
             )
         except Exception as e:
             log.error("run_workflow_2: failed to build scoring_crew: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"scoring_crew_build_failed: {e}",
+                meta={
+                    "reason": "scoring_crew_build_failed",
+                    "error": str(e),
+                    "research_brief_chars": len(research_brief),
+                },
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -407,6 +455,11 @@ async def run_workflow_2(
             )
         except BudgetExceeded as e:
             log.error("run_workflow_2: budget exceeded on scoring: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded on scoring",
+                meta={"reason": "budget_exceeded", "phase": "scoring"},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -415,6 +468,11 @@ async def run_workflow_2(
             }
         except Exception as e:
             log.error("run_workflow_2: scoring crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"scoring_crew_crashed: {e}",
+                meta={"reason": "scoring_crew_crashed", "error": str(e)},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -431,12 +489,30 @@ async def run_workflow_2(
             f"{score_line}\n\n"
             f"Generate the full PRD? (yes / no)"
         )
+        # Log SCORING_COMPLETE (decision made) and AWAITING_HUMAN
+        # (gate reached) as two separate writes — gives the dev a
+        # clear "scoring done, waiting for human" timeline.
+        write_run_status(
+            run_id, RunStatus.SCORING_COMPLETE,
+            note=score_line,
+            meta={"score": score, "threshold": DEFAULT_THRESHOLD},
+        )
+        write_run_status(
+            run_id, RunStatus.AWAITING_HUMAN,
+            note="paused at human gate",
+            meta={"score": score, "threshold": DEFAULT_THRESHOLD, "prompt": prompt},
+        )
         log.info("run_workflow_2: pausing at human gate — %s", score_line)
         reply = await ask_user(run_id, prompt, timeout_s=86_400)
 
         if reply is None:
             # Timeout — mark cancelled and return.
             log.warning("run_workflow_2: human gate timed out for run %s", run_id)
+            write_run_status(
+                run_id, RunStatus.CANCELLED,
+                note="human gate timed out (24h deadline)",
+                meta={"reason": "human_gate_timeout", "score": score},
+            )
             return {
                 "run_id": run_id,
                 "status": "cancelled",
@@ -445,6 +521,11 @@ async def run_workflow_2(
             }
         if not reply.strip().lower().startswith("y"):
             log.info("run_workflow_2: user declined PRD for run %s (reply=%r)", run_id, reply)
+            write_run_status(
+                run_id, RunStatus.HUMAN_DECLINED,
+                note=f"user declined PRD: {reply!r}",
+                meta={"reason": "user_declined_prd", "score": score, "user_reply": reply},
+            )
             return {
                 "run_id": run_id,
                 "status": "cancelled",
@@ -452,6 +533,12 @@ async def run_workflow_2(
                 "score": score,
                 "user_reply": reply,
             }
+        # User approved — log it so the timeline shows the yes/no.
+        write_run_status(
+            run_id, RunStatus.HUMAN_APPROVED,
+            note=f"user approved PRD: {reply!r}",
+            meta={"score": score, "user_reply": reply},
+        )
 
         # ---- Step 4: PRD writing -----------------------------------------
         try:
@@ -461,6 +548,11 @@ async def run_workflow_2(
             )
         except Exception as e:
             log.error("run_workflow_2: failed to build prd_crew: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"prd_crew_build_failed: {e}",
+                meta={"reason": "prd_crew_build_failed", "error": str(e), "score": score},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -478,6 +570,11 @@ async def run_workflow_2(
             )
         except BudgetExceeded as e:
             log.error("run_workflow_2: budget exceeded on PRD writing: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded on PRD writing",
+                meta={"reason": "budget_exceeded", "phase": "prd_writing"},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -486,6 +583,11 @@ async def run_workflow_2(
             }
         except Exception as e:
             log.error("run_workflow_2: PRD crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"prd_crew_crashed: {e}",
+                meta={"reason": "prd_crew_crashed", "error": str(e)},
+            )
             return {
                 "run_id": run_id,
                 "status": "failed",
@@ -500,6 +602,16 @@ async def run_workflow_2(
         log.info(
             "run_workflow_2 COMPLETE — run_id=%s prd=%s",
             run_id, prd_path,
+        )
+        write_run_status(
+            run_id, RunStatus.COMPLETE,
+            note=f"PRD written to {prd_path.name}",
+            meta={
+                "prd_path": str(prd_path),
+                "prd_chars": len(prd_markdown),
+                "score": score,
+                "research_brief_chars": len(research_brief),
+            },
         )
         return {
             "run_id": run_id,
