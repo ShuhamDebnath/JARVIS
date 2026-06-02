@@ -39,9 +39,15 @@ _PLACEHOLDERS = {
 }
 
 # Required for Phase 0a + Phase 1 (your Step 4 instruction).
+# P1.15: MINIMAX_API_KEY added as REQUIRED because the live-routing target
+# is now the direct MiniMax API (per user's MiniMax token plan). The
+# DEEPSEEK and OPENROUTER keys stay in REQUIRED as a fallback — flipping
+# the YAML back to `deepseek/deepseek-chat` is a one-liner if MiniMax
+# rate-limits mid-run.
 REQUIRED_KEYS = [
-    "DEEPSEEK_API_KEY",
-    "OPENROUTER_API_KEY",
+    "MINIMAX_API_KEY",   # primary — direct MiniMax API (P1.15 routing)
+    "DEEPSEEK_API_KEY",  # fallback — kept populated as a safety net
+    "OPENROUTER_API_KEY",  # fallback — kept populated as a safety net
     "SERPER_API_KEY",
 ]
 

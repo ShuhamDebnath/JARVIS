@@ -7,8 +7,19 @@
 # below — do NOT touch the loader in `backend/crews/<workflow>_crew.py`.
 #
 # To swap an LLM, edit the `llm:` line for that agent. The string is
-# passed verbatim to OpenRouter (e.g. `deepseek/deepseek-chat`),
-# Anthropic (`claude-sonnet-4-5`), etc. No Python changes needed.
+# passed verbatim to the LLM provider via LiteLLM:
+#   `minimax/MiniMax-M3`           — direct MiniMax API (MINIMAX_API_KEY)
+#   `minimax/MiniMax-M2.7`         — MiniMax long-context fallback
+#   `deepseek/deepseek-chat`       — via OpenRouter (OPENROUTER_API_KEY)
+#   `claude-sonnet-4-5`            — direct Anthropic (ANTHROPIC_API_KEY)
+# No Python changes needed.
+#
+# P1.15 routing: ALL agents route to direct MiniMax API to use the
+# user's MiniMax token plan (cheaper, single-billing-source).
+# This replaced the prior deepseek/deepseek-chat (OpenRouter) routing
+# that shipped with Phase 1 P1.1. DEEPSEEK_API_KEY and OPENROUTER_API_KEY
+# stay populated in .env as a fallback — flipping back is a one-line
+# `replace_all` if MiniMax API gets rate-limited mid-run.
 #
 # Schema reminder (CrewAI Agent kwargs):
 #   role:           short job title the agent uses when self-describing
@@ -31,7 +42,7 @@ hello_agent:
     is working end-to-end. You are deliberately minimal: no tools, no
     delegation, no memory reads. If a real greeting is requested, keep
     it under 500 characters and use plain text (no markdown, no emoji).
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: []
   allow_delegation: false
   verbose: true
@@ -75,7 +86,7 @@ research_director:
     You are the head of a world-class market research department. You
     never do research yourself — you coordinate specialists and
     synthesise their findings into a clear, evidence-based brief.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: []
   allow_delegation: true   # manager_agent: delegates to 6 specialists
   memory: false
@@ -97,7 +108,7 @@ research_interpreter:
     You produce structured output, never free-form prose. You never
     delegate. Your output is parsed downstream — if it is not valid
     JSON matching the schema, the entire workflow breaks.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
     # ESCAPE HATCH (ADR-0002 Q5, grilling session 3, 2026-06-01):
     # If 3-retry validation failures exceed 5% over the first 10 runs,
     # switch to minimax/minimax-m3 (the coding/multimodal tier) — it's
@@ -124,7 +135,7 @@ product_director:
     You know what makes an app succeed in India. You score opportunities
     with evidence, not gut feeling, and write PRDs that developers can
     actually build from.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: []
   allow_delegation: true   # manager_agent: delegates to 2 product specialists
   memory: false
@@ -143,7 +154,7 @@ pain_point_hunter:
     You are an obsessive researcher who finds what users actually
     complain about, not what founders assume they complain about. You
     only cite real sources. You never make up pain points.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [RedditTool, AppStoreScraperTool, SerperDevTool]
   allow_delegation: false
   memory: false
@@ -161,7 +172,7 @@ competitor_mapper:
     You are a competitive intelligence analyst. You find every player
     in a market, quantify their position, and surface their weaknesses
     with evidence from their reviews.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [AppStoreScraperTool, PlayStoreScraperTool, SerperDevTool]
   allow_delegation: false
   memory: false
@@ -179,7 +190,7 @@ revenue_estimator:
     You are a mobile app revenue analyst. You estimate market size from
     public signals — chart positions, review counts, pricing pages.
     You give ranges, not false precision.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [FirecrawlTool, SerperDevTool, AppStoreScraperTool]
   allow_delegation: false
   memory: false
@@ -197,7 +208,7 @@ gap_finder:
     You read thousands of negative reviews to find the patterns others
     miss. You only report gaps that appear in multiple sources — never
     single anecdotes. Evidence count per gap is mandatory.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [AppStoreScraperTool, PlayStoreScraperTool, RedditTool]
   allow_delegation: false
   memory: false
@@ -216,7 +227,7 @@ trend_validator:
     still a bad investment. You use data, not opinion, and you always
     include India-specific signals because that is the primary market
     for this developer.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [PytrendsTool, RedditTool, SerperDevTool]
   allow_delegation: false
   memory: false
@@ -235,7 +246,7 @@ audience_sizer:
     never inflate TAM. You always break out India-specific numbers
     because Indian pricing and behaviour differs significantly from
     global averages.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [RedditTool, SerperDevTool, FirecrawlTool]
   allow_delegation: false
   memory: false
@@ -283,7 +294,7 @@ opportunity_scorer:
     For build effort, you ARE allowed to use judgement — LLMs are good
     at reading a feature list and estimating engineering complexity.
     You mark that sub-score with "(subjective)" so the user knows.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: [ScoringRubricTool]
   allow_delegation: false
   memory: false
@@ -303,7 +314,7 @@ prd_writer:
     Flutter and Swift well enough to flag technical complexity. You
     always include a screen list because it feeds directly into the
     design workflow.
-  llm: deepseek/deepseek-chat
+  llm: minimax/MiniMax-M3
   tools: []
   allow_delegation: false
   memory: false

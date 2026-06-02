@@ -21,7 +21,7 @@
 hello_task:
   description: >
     Greet the user. Return a single short message that fits inside the
-    HelloOutput JSON schema: {"message": "<your greeting>"}. The greeting
+    HelloOutput JSON schema: {{"message": "<your greeting>"}}. The greeting
     must be plain text, 1-500 characters, and contain no markdown.
   expected_output: >
     A JSON object that parses cleanly into HelloOutput (one field:
@@ -69,7 +69,7 @@ research_interpretation_task:
   description: >
     Interpret the user's one-sentence app idea into a structured brief.
     Output ONLY this JSON shape — no other text, no markdown fences:
-    {
+    {{
       "app_category": "<one of: productivity | health | education | finance | social | utility | other>",
       "target_user": "<one-sentence demographic, 10-200 chars>",
       "core_problem": "<one-sentence problem statement, 10-300 chars>",
@@ -77,7 +77,7 @@ research_interpretation_task:
       "subreddits_to_monitor": ["<1-8 subreddit names, NO 'r/' prefix>"],
       "app_store_categories": ["<2-6 App Store / Play Store category names>"],
       "ambiguity_flag": "<null when clear, or 'AMBIGUOUS: <why>' when unclear>"
-    }
+    }}
   expected_output: >
     Valid JSON matching the schema above. No prose, no markdown fences.
     The next task in this crew depends on this output being parseable.

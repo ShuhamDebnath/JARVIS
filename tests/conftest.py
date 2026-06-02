@@ -161,3 +161,27 @@ def tmp_state_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(human_gate, "STATE_DIR", tmp_path)
     monkeypatch.setattr(human_gate, "STATE_FILE", tmp_path / "runs.json")
     return tmp_path
+
+
+@pytest.fixture
+def env_valid_false(monkeypatch):
+    """Force `app.state.env_ok = False` for the duration of one test.
+
+    P1.15: the developer's .env now has real MINIMAX_API_KEY (and the
+    other required keys) populated, so the lifespan-set value of
+    `app.state.env_ok` is True in this checkout. Tests that exercise
+    the degraded-env path (HTTP 503 with the error envelope) need to
+    override that to False at the function level.
+
+    Pair with `client` (which only sets the env_ok state once per
+    module). `monkeypatch.setattr` auto-restores on teardown.
+
+    Usage:
+        def test_degraded_path(client):
+            ...
+            pytestmark = pytest.mark.usefixtures("env_valid_false")
+    """
+    from backend.main import app
+
+    monkeypatch.setattr(app.state, "env_ok", False)
+    yield

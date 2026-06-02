@@ -97,7 +97,7 @@ def mock_workflow_2(monkeypatch):
 
 
 def test_workflows_research_prd_degraded_env_returns_503_envelope(
-    client: TestClient,
+    client: TestClient, env_valid_false: None
 ) -> None:
     """`POST /workflows/research-prd` in degraded env (env_valid=false,
     the test default) returns 503 with the structured error envelope

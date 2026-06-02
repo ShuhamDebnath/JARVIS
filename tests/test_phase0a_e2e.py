@@ -59,7 +59,9 @@ def client() -> TestClient:
 # ---------------------------------------------------------------------------
 
 
-def test_health_endpoint_returns_200_with_env_valid_false(client: TestClient) -> None:
+def test_health_endpoint_returns_200_with_env_valid_false(
+    client: TestClient, env_valid_false,
+) -> None:
     """`GET /health` returns 200 with the env-validity envelope.
 
     Phase 0a has no .env keys, so `env_valid` is `false`. The HTTP
@@ -151,7 +153,7 @@ def test_crews_hello_mock_returns_200_with_hello_output_shape(
 
 
 def test_crews_hello_no_mock_returns_503_with_error_envelope(
-    client: TestClient,
+    client: TestClient, env_valid_false,
 ) -> None:
     """`POST /crews/hello` (without `?mock=true`) returns 503 with a
     structured error envelope explaining the state and the fix.
