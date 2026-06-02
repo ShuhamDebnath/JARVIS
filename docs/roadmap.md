@@ -107,6 +107,8 @@ scripts/setup.sh
 
 ### Phase 0b — Workflow 2 prep (1–2 hrs, before Phase 1 starts)
 
+> ✅ **Phase 0b complete (2026-06-02).** All seven Workflow 2 research tools are installed, importable, and have a passing smoke test. The pip batch (`firecrawl-py==4.28.2`, `praw==7.8.1`, `pytrends==4.9.2`, `beautifulsoup4==4.14.3`, `playwright==1.60.0` with chromium v1223) is pinned in `backend/requirements.txt`. The npm batch (`google-play-scraper@10.1.3`, `app-store-scraper@0.18.0`) is pinned in `package.json` + `package-lock.json`. Two commits close the sub-phase: `config: phase 0b — install workflow 2 research tools` and `docs: phase 0b complete, transition to phase 1`. The full Phase 0a pytest suite is still **8/8 green in 3.27s** — no regressions. The next phase is **Phase 1 — Workflow 2 (Research → PRD)**, which builds the `tools/*.py` wrappers on top of these raw libraries.
+
 **Goal:** All the tools Workflow 2 needs are installable and importable.
 
 **Install batch:**
@@ -117,7 +119,15 @@ scripts/setup.sh
 
 **Smoke test:** Each tool runs a single demo call (search one app, scrape one URL, etc.) and prints a result.
 
-**Definition of done for 0b:** `python -c "from tools.store_scraper import search_app_store; print(search_app_store('habit tracker')[:3])"` prints 3 app names.
+**Definition of done for 0b (actual, achieved 2026-06-02):** The literal DoD line in v1.0 of this roadmap — `python -c "from tools.store_scraper import search_app_store; print(search_app_store('habit tracker')[:3])"` — is Phase 1 work (the `tools/store_scraper.py` wrapper is built in Phase 1, line 174). The spirit of the DoD is satisfied now: both `google-play-scraper` and `app-store-scraper` return 3 real app names for `"habit tracker"` when called directly. See `backend/output/phase_0b_smoke_test_2026-06-02.md` for the per-tool results and the `google-play-scraper` `.default` indirection gotcha the Phase 1 wrapper must handle.
+
+**Files added or modified this sub-phase:**
+```
+backend/requirements.txt        ← +5 Phase 0b pins (commented → pinned)
+package.json                     ← npm init; deps: google-play-scraper, app-store-scraper
+package-lock.json                ← 130 transitive npm packages, locked
+backend/output/phase_0b_smoke_test_2026-06-02.md   ← untracked, output/ is gitignored
+```
 
 ---
 
@@ -472,7 +482,8 @@ Before marking any phase done:
 | Phase | Status |
 |-------|--------|
 | 0a — Hello-world crew | ✅ **Complete (2026-06-02)** |
-| 0b — Workflow 2 prep (scraping tools) | ⬜ Not started — **active next** |
+| 0b — Workflow 2 prep (scraping tools) | ✅ **Complete (2026-06-02)** |
+| 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started — **active next** |
 | 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started |
 | 0d — Workflow 8 prep (Open Interpreter) | ⬜ Not started |
 | 1 — Workflow 2 (PRD) | ⬜ Not started |
@@ -483,7 +494,7 @@ Before marking any phase done:
 | 6 — Remaining Workflows | ⬜ Not started |
 | 7 — Scheduling + Docker | ⬜ Not started |
 
-> Update this table as phases complete. Phase 0a closed with five logical commits on 2026-06-02.
+> Update this table as phases complete. Phase 0a closed with five logical commits on 2026-06-02. Phase 0b closed with two logical commits on 2026-06-02 (`config:` install + `docs:` closeout). The next sub-phase is **Phase 0c** (deferred until Phase 3b starts — Skyvern is a fragile Apple Silicon install, per ADR-0003).
 
 ---
 
