@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.utils.env_validator import validate_env
 from backend.utils.logger import get_logger
@@ -144,3 +145,85 @@ def health() -> dict:
         ),
         "phase": getattr(app.state, "phase", "unknown"),
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /crews/hello — hello-world crew endpoint (Phase 0a)
+# ---------------------------------------------------------------------------
+#
+# Per ADR-0002 Q2 (grilling session 3, 2026-06-01): this endpoint is a
+# smoke-test for the crew assembly + contract plumbing. It has two
+# paths:
+#
+#   ?mock=true  → 200 with a canned HelloOutput JSON. This is the only
+#                 way to call the endpoint in Phase 0a (env_valid: false
+#                 means no real LLM call is possible). The frontend
+#                 dashboard uses this path to render a "hello" tile
+#                 without burning any API quota.
+#
+#   (no mock)   → 503 with a clear message. Real crew runs unblock in
+#                 Phase 1 once env validation passes AND the
+#                 hello_crew is wired to call the real LLM (it isn't
+#                 yet — see Finding 1 in the Phase 0a handoff report:
+#                 we never wired a real LLM call here, only a
+#                 hardcoded response).
+#
+# We deliberately do NOT instantiate `build_hello_crew()` here — that
+# would require a `MockLLM` instance, which lives in tests/. The 200
+# path returns a hardcoded response that matches the HelloOutput
+# schema exactly; the actual crew execution is exercised by
+# `tests/test_hello_crew.py`, not by this HTTP endpoint.
+
+
+@app.post("/crews/hello")
+def run_hello_crew(mock: bool = False) -> JSONResponse:
+    """Hello-world crew endpoint. See module-level comment for the
+    full behavioural contract.
+
+    Args:
+        mock: Query-param flag. When true, returns a canned
+            `HelloOutput` response (Phase 0a "hello" tile for the
+            dashboard). When false, returns 503 — the real crew is
+            Phase 1 work.
+
+    Returns:
+        200 with `{"status": "ok", "phase": "0a", "mock": true, ...}`
+        on the mock path; 503 with a structured error envelope on
+        the real-crew path.
+    """
+    if mock:
+        logger.info("POST /crews/hello: mock path — returning canned HelloOutput")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "phase": "0a",
+                "mock": True,
+                "message": "Hello from Jarvis",
+            },
+        )
+
+    # Real-crew path is Phase 1. The 503 envelope mirrors the
+    # /health error shape so the dashboard can render both with the
+    # same component.
+    env_ok = getattr(app.state, "env_ok", False)
+    logger.warning(
+        "POST /crews/hello: real-crew path blocked (env_valid=%s, phase=%s) — "
+        "caller must use ?mock=true in Phase 0a",
+        env_ok, getattr(app.state, "phase", "unknown"),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "error",
+            "code": 503,
+            "phase": getattr(app.state, "phase", "unknown"),
+            "env_valid": env_ok,
+            "message": (
+                "Hello-world crew is in mock-only mode during Phase 0a. "
+                "Real crew runs require env validation to pass (Phase 1)."
+            ),
+            "fix": "Pass ?mock=true to get a canned response. Example: "
+                   "POST /crews/hello?mock=true",
+        },
+    )
