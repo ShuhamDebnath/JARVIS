@@ -39,12 +39,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import os
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
+
+from backend.utils.logger import get_logger
 
 # ---------------------------------------------------------------------------
 # Locations and constants
@@ -65,16 +65,11 @@ DEFAULT_TIMEOUT_S = 86_400
 # 1 second is responsive enough for the dashboard without burning CPU.
 POLL_INTERVAL_S = 1.0
 
-# Module logger. Phase 0 has no backend/utils/logger.py yet, so we use
-# the stdlib logger for now. When logger.py exists, replace these two
-# lines with: from utils.logger import get_logger; log = get_logger(__name__).
-# Do NOT use print() in this file — print() is banned in production code
-# (see AI-RULES.md Rule 2).
-logging.basicConfig(
-    level=os.getenv("JARVIS_LOG_LEVEL", "INFO"),
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-)
-log = logging.getLogger("jarvis.human_gate")
+# Module logger — uses the shared Jarvis logger from backend/utils/logger.py.
+# That module wires a single FileHandler (backend/logs/jarvis.log) + stdout
+# handler at import time, so we just ask for a named logger here and start
+# logging. Per CLAUDE.md "Logging" rule: never use print() in production code.
+log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
