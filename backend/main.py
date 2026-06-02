@@ -25,10 +25,13 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from backend.crews.jarvis_ceo import run_workflow_2
+from backend.orchestrator.human_gate import new_run_id
 from backend.utils.env_validator import validate_env
 from backend.utils.logger import get_logger
 
@@ -225,5 +228,111 @@ def run_hello_crew(mock: bool = False) -> JSONResponse:
             ),
             "fix": "Pass ?mock=true to get a canned response. Example: "
                    "POST /crews/hello?mock=true",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /workflows/research-prd — kick off Workflow 2 (Research → PRD) (Phase 1)
+# ---------------------------------------------------------------------------
+#
+# Phase 1 counterpart of the /crews/hello endpoint above. Kicks
+# off `run_workflow_2` (the Python CEO orchestrator in
+# backend/crews/jarvis_ceo.py) as a BACKGROUND task and returns
+# the new run_id immediately so the dashboard can poll
+# `GET /workflow/status/{run_id}` (in human_gate) for progress.
+#
+# Why background, not synchronous:
+#   `run_workflow_2` includes a human gate (ADR-0000 Q3) that can
+#   block for up to 24h waiting for the user to reply. A sync
+#   endpoint would tie up a FastAPI worker for that whole time.
+#   Background tasks free the worker; the dashboard polls.
+#
+# Why no `?mock=true` knob:
+#   Unlike `/crews/hello`, Workflow 2 has no canned response —
+#   its value comes from the LLM reasoning over real research.
+#   The degraded-env path (env_valid=false) returns 503 with the
+#   same envelope as /crews/hello so the dashboard can render
+#   both with the same component.
+
+
+class ResearchPRDRequest(BaseModel):
+    """Request body for `POST /workflows/research-prd`.
+
+    Attributes:
+        app_idea: The user's one-sentence app idea (e.g. "a habit
+            tracker for Indian college students"). Forwarded to
+            `run_workflow_2()` as the crew's primary input.
+    """
+    app_idea: str
+
+
+@app.post("/workflows/research-prd")
+async def start_research_prd(
+    req: ResearchPRDRequest,
+    background: BackgroundTasks,
+) -> JSONResponse:
+    """Kick off Workflow 2 (Research → PRD) as a background task.
+
+    Behaviour:
+      - Degraded env (env_valid=false) → 503 with the structured
+        error envelope (mirrors /crews/hello). The workflow needs
+        real API keys; without them we don't even queue the run.
+      - Valid env → 202 with a fresh UUID `run_id`. The crew runs
+        in a background task. The dashboard polls
+        `GET /workflow/status/{run_id}` for progress and posts
+        replies to `POST /workflow/reply/{run_id}` to unblock the
+        human gate.
+
+    Args:
+        req: Pydantic-validated body with `app_idea`.
+        background: FastAPI's BackgroundTasks injection — the crew
+            is queued on this and runs AFTER the 202 is sent.
+
+    Returns:
+        202 envelope on the happy path; 503 envelope on degraded env.
+    """
+    env_ok = getattr(app.state, "env_ok", False)
+    if not env_ok:
+        logger.warning(
+            "POST /workflows/research-prd: blocked (env_valid=%s, phase=%s) — "
+            "caller must set up .env with real API keys",
+            env_ok, getattr(app.state, "phase", "unknown"),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "code": 503,
+                "phase": getattr(app.state, "phase", "unknown"),
+                "env_valid": env_ok,
+                "message": (
+                    "Workflow runs require env validation to pass. "
+                    "The research crew and product crew both need real "
+                    "API keys (OpenRouter, etc.) to function."
+                ),
+                "fix": (
+                    "cp .env.example .env  # then fill in real API keys. "
+                    "Run `python -m utils.env_validator` for a full report."
+                ),
+            },
+        )
+
+    # Happy path — queue the crew as a background task. The run_id
+    # is generated here (not inside run_workflow_2) so the HTTP
+    # response can include it before the task starts.
+    run_id = new_run_id()
+    background.add_task(run_workflow_2, req.app_idea, run_id)
+    logger.info(
+        "POST /workflows/research-prd: queued run %s for app_idea=%r",
+        run_id, req.app_idea,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "run_id": run_id,
+            "status": "started",
+            "phase": getattr(app.state, "phase", "unknown"),
+            "app_idea": req.app_idea,
         },
     )
