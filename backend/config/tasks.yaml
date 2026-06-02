@@ -28,3 +28,292 @@ hello_task:
     `message` of type string, 1-500 chars).
   agent: hello_agent
   output_pydantic: backend.contracts.hello.HelloOutput
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1 — WORKFLOW 2 (Research → PRD)
+#
+# Per ADR-0002 Q1, the 6 research specialist tasks have
+# `async_execution: true` so they fan out in parallel under
+# `Process.hierarchical`. `research_interpretation_task` and
+# `research_consolidation_task` stay SYNC — interpretation runs first,
+# all 6 specialists depend on its output via `context:`, and
+# consolidation waits for all 6 to finish.
+#
+# Per ADR-0002 Q3, `research_interpretation_task` is enforced by a
+# Pydantic v2 contract (`backend.contracts.research.ResearchInterpretation`)
+# via `output_pydantic`, with `max_retries: 3` per ADR-0002 Q6. On all
+# retries failing, `contracts.research.InterpretationValidationError`
+# is raised; the CEO orchestrator catches it and writes the full LLM
+# transcript to `backend/output/failed_interpretation_{run_id}.md`.
+#
+# Per ADR-0000 Q3, the human gate is implemented in the Python CEO
+# orchestrator via `human_gate.ask_user()`, NOT via CrewAI's
+# `human_input: true` (which only works in CLI mode). The
+# `product_opportunity_scoring_task` therefore has NO `human_input:`
+# flag — the CEO pauses after the scoring task returns.
+#
+# Task-name prefixing: every task is prefixed with `research_` or
+# `product_` so the two dept_crews can be assembled from the same
+# tasks.yaml without key collisions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# TASK 0 — Interpretation (per ADR-0002 Q7)
+# Single LLM call. Produces a structured JSON interpretation that all
+# 6 specialists consume as context. Prevents the "6-different-research-
+# directions" failure mode where the same input produced 6 unrelated
+# research threads. Originally owned by research_director (ADR-0000
+# Q5); reassigned to research_interpreter per ADR-0002 Q7 because the
+# manager-agent system prompt ("delegate") was fighting the
+# interpretation prompt ("produce JSON yourself").
+research_interpretation_task:
+  description: >
+    Interpret the user's one-sentence app idea into a structured brief.
+    Output ONLY this JSON shape — no other text, no markdown fences:
+    {
+      "app_category": "<one of: productivity | health | education | finance | social | utility | other>",
+      "target_user": "<one-sentence demographic, 10-200 chars>",
+      "core_problem": "<one-sentence problem statement, 10-300 chars>",
+      "search_keywords": ["<3-10 keywords all specialists must use>"],
+      "subreddits_to_monitor": ["<1-8 subreddit names, NO 'r/' prefix>"],
+      "app_store_categories": ["<2-6 App Store / Play Store category names>"],
+      "ambiguity_flag": "<null when clear, or 'AMBIGUOUS: <why>' when unclear>"
+    }
+  expected_output: >
+    Valid JSON matching the schema above. No prose, no markdown fences.
+    The next task in this crew depends on this output being parseable.
+  agent: research_interpreter
+  output_pydantic: backend.contracts.research.ResearchInterpretation
+  max_retries: 3
+
+# TASKS 1-6 — Six parallel research specialists
+# All six share the interpretation JSON as `context:`. The
+# "Use the interpretation document above" line in each description is
+# the explicit instruction that prevents specialists from re-interpreting.
+# All six are `async_execution: true` so they fan out in parallel
+# (per ADR-0002 Q1). CrewAI blocks `research_consolidation_task` until
+# all six async tasks complete.
+
+research_pain_point_task:
+  description: >
+    Research pain points for the user's app idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    search_keywords and subreddits_to_monitor from the interpretation
+    document — do not invent your own.
+
+    Search Reddit (the subreddits listed in the interpretation),
+    ProductHunt discussions, and App Store 1-star reviews for apps in
+    the interpretation's app_category.
+    Return the top 10 pain points. For each: the pain point, source
+    URL, and a direct quote or evidence.
+  expected_output: >
+    A numbered list of 10 pain points with source URLs and evidence
+    quotes. Search keywords and subreddits used MUST match the
+    interpretation document.
+  agent: pain_point_hunter
+  async_execution: true
+  context: [research_interpretation_task]
+
+research_competitor_mapping_task:
+  description: >
+    Find all apps that compete with the user's app idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_store_categories and search_keywords from the interpretation
+    document — do not invent your own.
+
+    Search App Store and Play Store (in the app_store_categories from
+    the interpretation) for the top 10 competitors.
+    For each app return: name, rating, estimated downloads, last
+    update date, price, key strength, key weakness.
+  expected_output: >
+    A markdown table with 10 competitors and all required columns
+    filled. App store categories searched MUST match the interpretation
+    document.
+  agent: competitor_mapper
+  async_execution: true
+  context: [research_interpretation_task]
+
+research_revenue_estimation_task:
+  description: >
+    Estimate the revenue opportunity for the user's app idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_category and search_keywords from the interpretation document.
+
+    Find pricing models of the top competitors.
+    Estimate MRR for the top 3 apps based on chart position and review
+    velocity.
+    Return: revenue range, top 3 monetisation models used, India
+    pricing context.
+  expected_output: >
+    Revenue range estimate, monetisation model breakdown, India-specific
+    pricing note.
+  agent: revenue_estimator
+  async_execution: true
+  context: [research_interpretation_task]
+
+research_gap_finding_task:
+  description: >
+    Find the top 5 feature gaps in apps competing with the user's app
+    idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    app_category and search_keywords from the interpretation document.
+
+    Read 1-star and 2-star reviews across all competitor apps and
+    Reddit complaints.
+    Only report gaps that appear in multiple sources.
+    For each gap: description, evidence count, and example quotes.
+  expected_output: >
+    Top 5 feature gaps with evidence count and example quotes for each.
+  agent: gap_finder
+  async_execution: true
+  context: [research_interpretation_task]
+
+research_trend_validation_task:
+  description: >
+    Validate market trend for the user's app idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    search_keywords and target_user from the interpretation document.
+
+    Check Google Trends for 5-year trajectory of the search_keywords.
+    Check Reddit for subreddit growth (use subreddits_to_monitor) in
+    the last 12 months.
+    Search for recent news about this market.
+    Include India-specific signals.
+  expected_output: >
+    Trend direction (growing/stable/declining), velocity score,
+    India-specific trend data, and 3 supporting data points.
+    Search keywords and subreddits used MUST match the interpretation
+    document.
+  agent: trend_validator
+  async_execution: true
+  context: [research_interpretation_task]
+
+research_audience_sizing_task:
+  description: >
+    Estimate the audience size for the user's app idea.
+
+    Use the interpretation document from research_interpretation_task
+    (shared as context). Do not re-interpret the idea. Use the
+    target_user, subreddits_to_monitor, and search_keywords from the
+    interpretation document.
+
+    Use subreddit subscriber counts, monthly keyword search volumes,
+    and App Store category download estimates.
+    Always break out India-specific numbers separately.
+  expected_output: >
+    Global TAM estimate, India SAM estimate, primary demographic profile
+    (age range, occupation, device type). Subreddits and keywords used
+    MUST match the interpretation document.
+  agent: audience_sizer
+  async_execution: true
+  context: [research_interpretation_task]
+
+# TASK 7 — Consolidation (sync, blocks on all 6 async tasks)
+research_consolidation_task:
+  description: >
+    Consolidate all research findings for the user's app idea.
+    You have received outputs from 6 specialists:
+    pain points, competitors, revenue, gaps, trends, and audience.
+    Synthesise into one unified research brief using this format:
+    - Problem confirmed: yes/no + one sentence
+    - Market size: TAM and India SAM
+    - Top 3 pain points
+    - Competitor landscape summary
+    - Biggest gap found
+    - Trend direction and velocity
+    - India-specific insight
+  expected_output: >
+    A structured research brief in the exact format specified.
+    No watered-down summaries — include the strongest evidence from
+    each specialist.
+  agent: research_director
+  context: [research_pain_point_task, research_competitor_mapping_task,
+            research_revenue_estimation_task, research_gap_finding_task,
+            research_trend_validation_task, research_audience_sizing_task]
+
+# TASK 8 — Opportunity Scoring (product_dept)
+# The human gate happens AFTER this task returns. The CEO orchestrator
+# (jarvis_ceo.py) calls `human_gate.ask_user()` with the score and
+# pauses for the user's go/no-go. We do NOT use CrewAI's
+# `human_input: true` because it only works in CLI mode (per ADR-0000
+# Q3); the Python ask_user() is the only mechanism that survives a
+# FastAPI + browser dashboard topology.
+product_opportunity_scoring_task:
+  description: >
+    Score the market opportunity for the user's app idea.
+    Use the research brief from the consolidation task.
+
+    STEP 1 — For each of the 4 hard dimensions, you MUST:
+      (a) Extract the specific data point from the research brief
+          (e.g. "subreddit size = 47,000 subscribers",
+                 "competitors with rating >= 4.0 = 8 apps",
+                 "top app MRR = $12k",
+                 "pytrends 12-month slope = +18%").
+      (b) Look up the matching bracket in the ScoringRubricTool
+          and report the score from the rubric.
+      (c) Show the data point AND the rubric lookup in the output.
+      (d) You are NOT allowed to assign a hard sub-score without
+          showing both the extracted data and the rubric row that
+          produced it.
+
+    STEP 2 — For the 1 subjective dimension (build effort vs reward):
+      (a) Read the top 3 gaps from the Gap Finder and the top 3
+          pain points from Pain Point Hunter.
+      (b) Estimate Flutter/Swift MVP complexity in weeks of solo work.
+      (c) Score 1-10 with the explicit label "(subjective)" so the
+          user knows this sub-score is LLM judgement, not a rubric.
+
+    STEP 3 — At the TOP of the report, log:
+      "Threshold used: 35/50 (DEFAULT — to be re-validated after 10+ runs)"
+      The user must see this every time so they know the threshold
+      has not been empirically calibrated yet.
+
+    STEP 4 — Present the standard Jarvis score format with the 4 hard
+    sub-scores and 1 subjective sub-score, total out of 50.
+
+    STEP 5 — End with: "Generate full PRD? (yes / no)"
+  expected_output: >
+    Formatted opportunity score report. Must contain:
+    - Threshold-used line at the top
+    - For each of 4 hard sub-scores: the extracted data point, the
+      rubric row it mapped to, and the score
+    - For build effort: explicit "(subjective)" label
+    - Total out of 50 and the human gate question
+  agent: opportunity_scorer
+  context: [research_consolidation_task]
+
+# TASK 9 — PRD Writing (product_dept, only runs if user approved at gate)
+product_prd_writing_task:
+  description: >
+    Write a complete PRD for the user's app idea.
+    Use the research brief and opportunity score as your source
+    material. Write all 12 sections:
+    1. Executive Summary
+    2. Problem Statement (with evidence)
+    3. Market Opportunity
+    4. User Personas (from real review data)
+    5. Competitor Analysis Table
+    6. MVP Feature List (with user stories)
+    7. V2 Feature List
+    8. Differentiation Strategy
+    9. Monetisation Plan (India pricing)
+    10. Technical Notes (Flutter/Swift)
+    11. Screen List
+    12. Success Metrics and KPIs
+    Be specific. No vague requirements. Every feature needs a user
+    story.
+  expected_output: >
+    A complete markdown PRD document with all 12 sections.
+    Minimum 1500 words. Every feature has a user story.
+    Screen list is complete and can feed into Workflow 1.
+  agent: prd_writer
+  context: [research_consolidation_task, product_opportunity_scoring_task]
