@@ -1,0 +1,29 @@
+{
+  "name": "jarvis",
+  "version": "1.0.0",
+  "description": "> Personal AI operating system for a solo mobile app developer.   > Automates market research, competitor analysis, content creation, UI validation, and social posting.   > Private. Single-user. Runs on macOS.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "pytest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShuhamDebnath/JARVIS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ShuhamDebnath/JARVIS/issues"
+  },
+  "homepage": "https://github.com/ShuhamDebnath/JARVIS#readme",
+  "dependencies": {
+    "app-store-scraper": "^0.18.0",
+    "google-play-scraper": "^10.1.3"
+  }
+}

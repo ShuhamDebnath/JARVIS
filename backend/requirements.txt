@@ -85,10 +85,20 @@ uvicorn==0.48.0
 pytest-asyncio==0.26.0
 
 # ----------------------------------------------------------------------------
-# Deferred to Phase 0b (before Phase 1 starts)
+# Phase 0b — Workflow 2 research tools (installed 2026-06-02)
 # ----------------------------------------------------------------------------
-# firecrawl-py
-# praw
-# pytrends
-# playwright
-# beautifulsoup4
+# Versions below are first tracked pins. Smoke tests confirm importability
+# and (for pytrends + beautifulsoup4) a single demo call. firecrawl-py and
+# praw need API keys (FIRECRAWL_API_KEY, REDDIT_CLIENT_ID/SECRET) to run
+# live calls — those land in Phase 1 when tools/* wrappers are built.
+# Per ADR-0002 Q6 — track any future bumps in
+# backend/output/version_bump_log_{date}.md.
+firecrawl-py==4.28.2
+praw==7.8.1
+pytrends==4.9.2
+beautifulsoup4==4.14.3
+
+# playwright is installed in 0b.2 (binary browser download is a separate
+# step). The Python wheel pulls in pytest-playwright transitively only if
+# requested, so we keep the pin explicit.
+playwright==1.60.0
