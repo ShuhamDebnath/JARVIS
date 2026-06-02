@@ -33,7 +33,7 @@ Jarvis Dynamic Data (Ignore contents, keep folders)
 -------------------------------------------------------------------------
 
 backend/logs/*
-!backend/logs/jarvis.log
+# (no whitelist — both jarvis.log and the empty dir marker are ignored)
 
 backend/output/*
 !backend/output/.keep
@@ -41,7 +41,8 @@ backend/output/*
 backend/upload/*
 !backend/upload/.keep
 
-backend/state/runs.json   # JSON-file run state — changes every workflow run
+# JSON-file run state — changes every workflow run; never commit
+backend/state/runs.json
 
 ChromaDB Vector Database
 
