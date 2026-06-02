@@ -48,6 +48,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from backend.crews.jarvis_ceo import run_workflow_2  # noqa: E402
 from backend.orchestrator import human_gate  # noqa: E402
 from backend.orchestrator.human_gate import new_run_id  # noqa: E402
+from backend.utils import llm_provider  # noqa: E402,F401  (P1.15 minimax/ shim — side-effect import)
 
 # Fixed idea for this E2E run (runbook Step 1). Indian college students
 # is a juicy target market — exercises the PytrendsTool India-specific

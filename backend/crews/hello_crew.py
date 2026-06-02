@@ -34,6 +34,7 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel
 
 from backend.contracts.hello import HelloOutput
+from backend.utils import llm_provider  # noqa: F401  (P1.15 minimax/ shim — side-effect import)
 from backend.utils.logger import get_logger
 
 # Module logger — tagged `backend.crews.hello_crew` in jarvis.log.

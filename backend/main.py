@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from backend.crews.jarvis_ceo import run_workflow_2
 from backend.orchestrator.human_gate import new_run_id
+from backend.utils import llm_provider  # noqa: F401  (P1.15 minimax/ shim — side-effect import)
 from backend.utils.env_validator import validate_env
 from backend.utils.logger import get_logger
 
