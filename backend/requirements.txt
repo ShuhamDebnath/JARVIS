@@ -70,6 +70,20 @@ fastapi==0.136.3
 # See backend/output/version_bump_log_2026-06-02.md.
 uvicorn==0.48.0
 
+# pytest-asyncio — async test runner. Required for the human_gate tests
+# in tests/test_human_gate.py (Step 9) which exercise `ask_user()` —
+# that function is async. The hello-world crew test (Step 7) is
+# synchronous (`crew.kickoff()` is sync in CrewAI 0.86) but we install
+# here so the test scaffolding is ready for Step 9.
+#
+# Pinned to 0.26.0 — the latest 0.x release as of 2026-06-02. The plan
+# suggested 0.24.x; 0.26.0 was chosen because it post-dates pytest 9
+# (released later in 2025) and is the newest 0.x that still respects
+# the "0.x release" locked decision. If a future pytest bump breaks
+# this pin, bump to the next 0.x — do NOT jump to 1.x without
+# re-checking the plan and tests.
+pytest-asyncio==0.26.0
+
 # ----------------------------------------------------------------------------
 # Deferred to Phase 0b (before Phase 1 starts)
 # ----------------------------------------------------------------------------
