@@ -1,0 +1,30 @@
+# backend/config/tasks.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Task definitions for Jarvis crews.
+#
+# Per CLAUDE.md (CrewAI Specific rules): every task definition lives in
+# YAML, never in Python. Each task is bound to one agent by the `agent:`
+# field (the value is a key in agents.yaml, NOT a class name).
+#
+# Schema reminder (CrewAI Task kwargs):
+#   description:     the prompt the agent sees. Keep it imperative.
+#   expected_output: short hint to the LLM about what shape the answer
+#                    should take — useful for the LLM, redundant with
+#                    `output_pydantic` for the runtime validator
+#   agent:           the agent key (in agents.yaml) that will run this
+#   output_pydantic: dotted Python path to a Pydantic BaseModel. The
+#                    loader in hello_crew.py resolves this with
+#                    `importlib.import_module` + `getattr`. ADR-0002
+#                    governs this convention.
+# ─────────────────────────────────────────────────────────────────────────────
+
+hello_task:
+  description: >
+    Greet the user. Return a single short message that fits inside the
+    HelloOutput JSON schema: {"message": "<your greeting>"}. The greeting
+    must be plain text, 1-500 characters, and contain no markdown.
+  expected_output: >
+    A JSON object that parses cleanly into HelloOutput (one field:
+    `message` of type string, 1-500 chars).
+  agent: hello_agent
+  output_pydantic: backend.contracts.hello.HelloOutput

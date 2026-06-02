@@ -29,7 +29,19 @@ Phase note (2026-06-01):
   lives here so both files can import it without a circular dep.
 """
 
-from __future__ import annotations
+# NOTE: Do NOT add `from __future__ import annotations` to this file.
+# Same upstream bug as `backend/contracts/hello.py` — see the comment
+# there for the full root cause. In short: `crewai.utilities.converter
+# .generate_model_description` reads `model.__annotations__` and
+# assumes each value is a real type. With PEP 563 (future annotations)
+# the values are STRINGS and CrewAI 0.86.0 crashes with
+# `AttributeError: 'str' object has no attribute '__name__'`. This
+# contract hasn't blown up yet because no crew consumes it (Phase 0a
+# has no research crew) — but the first Phase 1 kickoff would have
+# crashed silently. Defused 2026-06-02 when the same bug surfaced in
+# the hello-world crew's end-to-end test. If we ever migrate to a
+# CrewAI version that understands Pydantic v2 `model_fields`, this
+# comment can go.
 
 from typing import Literal
 

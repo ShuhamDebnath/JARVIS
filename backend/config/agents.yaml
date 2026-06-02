@@ -1,0 +1,37 @@
+# backend/config/agents.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent definitions for Jarvis crews.
+#
+# Per CLAUDE.md (CrewAI Specific rules): every agent definition lives in
+# YAML, never in Python. To add a new agent, append a new top-level key
+# below — do NOT touch the loader in `backend/crews/<workflow>_crew.py`.
+#
+# To swap an LLM, edit the `llm:` line for that agent. The string is
+# passed verbatim to OpenRouter (e.g. `deepseek/deepseek-chat`),
+# Anthropic (`claude-sonnet-4-5`), etc. No Python changes needed.
+#
+# Schema reminder (CrewAI Agent kwargs):
+#   role:           short job title the agent uses when self-describing
+#   goal:           one-sentence objective
+#   backstory:      a few sentences of persona / context
+#   llm:            model string in `<provider>/<model>` form
+#   tools:          list of tool names; the loader in hello_crew.py
+#                   resolves these against the registered BaseTool
+#                   classes in `backend/tools/` (Phase 1+)
+#   allow_delegation: false here because hello_agent has no peers
+#   verbose:        true so we see the LLM call logs during dev
+# ─────────────────────────────────────────────────────────────────────────────
+
+hello_agent:
+  role: "Jarvis Greeter"
+  goal: "Return a short, friendly greeting that proves the hello-world crew is wired correctly."
+  backstory: >
+    You are the first agent in the Jarvis multi-agent system. Your only
+    job is to greet the user and confirm that the crew + contract plumbing
+    is working end-to-end. You are deliberately minimal: no tools, no
+    delegation, no memory reads. If a real greeting is requested, keep
+    it under 500 characters and use plain text (no markdown, no emoji).
+  llm: deepseek/deepseek-chat
+  tools: []
+  allow_delegation: false
+  verbose: true
