@@ -289,7 +289,11 @@ product_opportunity_scoring_task:
     - For build effort: explicit "(subjective)" label
     - Total out of 50 and the human gate question
   agent: opportunity_scorer
-  context: [research_consolidation_task]
+  # NO `context:` here — research_consolidation_task lives in the
+  # research crew, not this one. Per ADR-0000 Q3, cross-department
+  # wiring is the CEO orchestrator's job: it calls
+  # `kickoff(product_dept_crew, inputs={"research_brief": ...})`
+  # with the brief extracted from the research crew's output.
 
 # TASK 9 — PRD Writing (product_dept, only runs if user approved at gate)
 product_prd_writing_task:
@@ -316,4 +320,8 @@ product_prd_writing_task:
     Minimum 1500 words. Every feature has a user story.
     Screen list is complete and can feed into Workflow 1.
   agent: prd_writer
-  context: [research_consolidation_task, product_opportunity_scoring_task]
+  # Only the intra-dept dep (product_opportunity_scoring_task) lives
+  # in this context list. The research_brief reaches this task via
+  # the CEO's `kickoff(inputs={"research_brief": ...})` call — see
+  # ADR-0000 Q3.
+  context: [product_opportunity_scoring_task]

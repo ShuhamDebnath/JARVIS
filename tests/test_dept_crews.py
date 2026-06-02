@@ -14,16 +14,17 @@ The P1.4 bug had three layers that surfaced end-to-end:
      Fix: exclude the manager by key when building the workers
      list in both factories.
 
-  3. (Pre-existing, NOT fixed in P1.4) The product tasks
-     reference `research_consolidation_task` in their `context:`
-     list, which is a cross-department reference the product
-     factory cannot resolve (it builds only the product tasks).
-     The CEO orchestrator (P1.5) is responsible for cross-dept
-     wiring — via `kickoff(inputs={"research_brief": ...})`, NOT
-     via task context. The YAML refs are stale and need to be
-     cleaned up; until then, `build_product_dept_crew` raises a
-     clear `KeyError`. This is documented below and called out
-     in the P1.4 commit message as a P1.15 follow-up.
+  3. (Fixed in P1.15) The product tasks previously referenced
+     `research_consolidation_task` in their `context:` list, which
+     was a cross-department reference the product factory could not
+     resolve (it builds only the product tasks). P1.15 cleaned up
+     tasks.yaml — the product tasks now reference only intra-dept
+     context, and the CEO orchestrator passes the research brief
+     via `kickoff(inputs={"research_brief": ...})` (per ADR-0000
+     Q3). The test below pins the post-P1.15 behaviour: the product
+     crew builds cleanly, the manager is excluded from workers,
+     and the only context dep on the prd_writing task is the
+     intra-dept scoring task.
 
 These tests pin all three behaviours down:
 
@@ -43,12 +44,12 @@ These tests pin all three behaviours down:
     strings), and the research_consolidation_task has all 6
     specialists as its context.
 
-  - `test_product_dept_crew_cross_dept_context_known_issue` —
-    pins the known YAML bug (3) as testable behaviour: the
-    product factory raises a clear `KeyError` identifying the
-    cross-dept reference. When the YAML is cleaned up in
-    P1.15, this test will flip to asserting the build
-    succeeds and the manager is excluded.
+  - `test_product_dept_crew_builds_after_p115_yaml_cleanup` —
+    pins the post-P1.15 product crew shape: 2 workers (manager
+    excluded), 2 tasks, hierarchical process with
+    product_director as manager, scoring task has empty context
+    (brief arrives via kickoff inputs), prd_writing task has
+    exactly the scoring task as its single intra-dept context.
 
   - `test_build_task_resolves_string_context` — unit-level
     regression test for `_build_task`: with a registry of
@@ -332,33 +333,81 @@ def test_build_task_raises_on_unresolvable_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Known issue — product_dept_crew cross-department context (P1.15 follow-up)
+# P1.15 verification — product_dept_crew builds cleanly after YAML cleanup
 # ---------------------------------------------------------------------------
 
 
-def test_product_dept_crew_cross_dept_context_known_issue() -> None:
-    """build_product_dept_crew fails on a cross-dept YAML bug.
+def test_product_dept_crew_builds_after_p115_yaml_cleanup() -> None:
+    """build_product_dept_crew must build cleanly after P1.15.
 
-    `backend/config/tasks.yaml` has the product tasks reference
-    `research_consolidation_task` in their `context:` lists.
-    That task lives in the RESEARCH crew, not the product
-    crew, so the product factory cannot resolve it.
+    Before P1.15, `backend/config/tasks.yaml` had the product
+    tasks reference `research_consolidation_task` in their
+    `context:` lists. That task lives in the RESEARCH crew, not
+    the product crew, so the product factory could not resolve
+    it and raised a clear KeyError. P1.15 cleaned up the YAML —
+    product tasks now reference only intra-dept context, and the
+    CEO orchestrator passes the research brief into this crew via
+    `kickoff(inputs={"research_brief": ...})` (per ADR-0000 Q3).
 
-    The right fix is in tasks.yaml (P1.15) — remove the
-    cross-department context refs; the CEO orchestrator
-    passes the research output to the product crew via
-    `kickoff(inputs={"research_brief": ...})`, not via task
-    context. This test pins the current behaviour so a
-    future cleanup of the YAML is visible at test time
-    (the assertion will need to flip to assert that the
-    build succeeds and the manager is excluded).
-
-    Until then, calling `build_product_dept_crew()` raises
-    a clear `KeyError` naming the unresolvable reference.
+    Invariants pinned now:
+      - The product crew builds with 2 workers (product_director
+        is the manager and is excluded from agents).
+      - 2 tasks: opportunity_scoring + prd_writing.
+      - product_director is the manager_agent (and NOT in agents).
+      - product_opportunity_scoring_task has EMPTY context — the
+        research_brief arrives via the CEO's kickoff inputs, not
+        through task context wiring.
+      - product_prd_writing_task has exactly 1 context dep:
+        product_opportunity_scoring_task (intra-dept, the SAME
+        instance that's in the crew's task list).
     """
-    with pytest.raises(KeyError) as excinfo:
-        build_product_dept_crew(llm=MockLLM())
-    assert "research_consolidation_task" in str(excinfo.value), (
-        f"KeyError should name the cross-dept reference "
-        f"'research_consolidation_task'; got: {excinfo.value}"
+    crew = build_product_dept_crew(llm=MockLLM())
+
+    # 3 agents in YAML (product_director + opportunity_scorer +
+    # prd_writer); 1 is the manager, so 2 end up in crew.agents.
+    assert len(crew.agents) == 2, (
+        f"product crew should have 2 workers (manager excluded); "
+        f"got {len(crew.agents)}"
+    )
+    # 2 tasks: opportunity_scoring + prd_writing.
+    assert len(crew.tasks) == 2, (
+        f"product crew should have 2 tasks; got {len(crew.tasks)}"
+    )
+    # Hierarchical process with product_director as manager.
+    assert crew.process.value == "hierarchical"
+    assert crew.manager_agent is not None
+    assert crew.manager_agent.role == "Product Department Director"
+    # Manager-exclusion invariant (same as research crew).
+    assert crew.manager_agent not in crew.agents, (
+        "product_director (manager) must NOT appear in crew.agents — "
+        "CrewAI 0.86.0 contract."
+    )
+
+    # Context wiring (intra-dept only after P1.15).
+    tasks_by_key = {
+        "product_opportunity_scoring_task": crew.tasks[0],
+        "product_prd_writing_task": crew.tasks[1],
+    }
+
+    scoring = tasks_by_key["product_opportunity_scoring_task"]
+    scoring_ctx = getattr(scoring, "context", None) or []
+    assert scoring_ctx == [], (
+        f"product_opportunity_scoring_task must have empty context "
+        f"after P1.15 — the research_brief is passed via the CEO's "
+        f"kickoff inputs, not via task context. Got: {scoring_ctx!r}"
+    )
+
+    prd = tasks_by_key["product_prd_writing_task"]
+    prd_ctx = getattr(prd, "context", None) or []
+    assert len(prd_ctx) == 1, (
+        f"product_prd_writing_task should have exactly 1 context dep "
+        f"(the scoring task); got {len(prd_ctx)}"
+    )
+    assert isinstance(prd_ctx[0], Task), (
+        f"product_prd_writing_task.context[0] must be a crewai.Task "
+        f"instance (P1.4 fix); got {type(prd_ctx[0]).__name__}"
+    )
+    assert prd_ctx[0] is tasks_by_key["product_opportunity_scoring_task"], (
+        "product_prd_writing_task.context[0] must be the SAME instance "
+        "as the scoring task in crew.tasks (not a copy or a string)."
     )

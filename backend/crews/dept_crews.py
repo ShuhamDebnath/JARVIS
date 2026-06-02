@@ -603,13 +603,11 @@ def build_product_dept_crew(
 
     # Same context-resolution pattern as research_dept_crew — see the
     # longer comment in build_research_dept_crew for the CrewAI
-    # 0.86.0 Pydantic quirk that forces this. NOTE: the product
-    # tasks have cross-department context references
-    # (research_consolidation_task) that are NOT in the product
-    # task_dict. Those will raise KeyError here — that's the right
-    # behaviour, surfacing a YAML/architecture issue that P1.15
-    # needs to address (cross-dept context is the CEO's job, not
-    # this factory's — see ADR-0000 Q3).
+    # 0.86.0 Pydantic quirk that forces this. After P1.15 the product
+    # tasks reference only intra-dept context (prd_writing depends on
+    # opportunity_scoring; scoring has no context). The research_brief
+    # reaches this crew through the CEO's `kickoff(inputs=...)` call,
+    # not via task context (per ADR-0000 Q3).
     task_dict: dict[str, Task] = {}
     for task_key in _PRODUCT_TASK_KEYS:
         task_cfg = tasks_cfg[task_key]
