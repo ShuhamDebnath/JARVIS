@@ -123,12 +123,19 @@ class ResearchInterpretation(BaseModel):
         "iOS and Android categories is fine. Example: ['Productivity', "
         "'Education'].",
     )
-    ambiguity_flag: str | None = Field(
-        default=None,
-        description="None when the idea is clear. A string starting with "
-        "'AMBIGUOUS: ' followed by a one-sentence reason when the idea "
-        "is unclear. The CEO orchestrator surfaces this to the user via "
-        "human_gate.ask_user() (per ADR-0000 Q5).",
+    ambiguity_flag: str = Field(
+        default="",
+        description="Empty string ('') when the idea is clear. A string "
+        "starting with 'AMBIGUOUS: ' followed by a one-sentence reason "
+        "when the idea is unclear. The CEO orchestrator surfaces this to "
+        "the user via human_gate.ask_user() (per ADR-0000 Q5). "
+        "Typed as plain `str` (not `Optional[str]` / `str | None`) to "
+        "bypass a CrewAI 0.86.0 bug: `describe_field` in "
+        "`crewai/utilities/converter.py:245` crashes with "
+        "`AttributeError: 'types.UnionType' object has no attribute "
+        "'__name__'` on `Optional[X]` fields under Python 3.11. The "
+        "empty-string sentinel preserves the same semantics (empty == "
+        "clear) without triggering the upstream crash.",
     )
 
 

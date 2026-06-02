@@ -76,7 +76,7 @@ research_interpretation_task:
       "search_keywords": ["<3-10 keywords all specialists must use>"],
       "subreddits_to_monitor": ["<1-8 subreddit names, NO 'r/' prefix>"],
       "app_store_categories": ["<2-6 App Store / Play Store category names>"],
-      "ambiguity_flag": "<null when clear, or 'AMBIGUOUS: <why>' when unclear>"
+      "ambiguity_flag": "<empty string '' when clear, or 'AMBIGUOUS: <why>' when unclear>"
     }}
   expected_output: >
     Valid JSON matching the schema above. No prose, no markdown fences.
