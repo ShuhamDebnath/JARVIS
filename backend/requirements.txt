@@ -112,3 +112,51 @@ skyvern==1.0.37
 # pyautogui>=0.9.54 — cross-platform GUI automation (used as fallback
 # when Skyvern is unavailable or unconfigured).
 pyautogui==0.9.54
+
+# ----------------------------------------------------------------------------
+# Phase 5 — Voice Layer (Wake Word + STT + TTS)  (installed 2026-06-03)
+# ----------------------------------------------------------------------------
+# Apple Silicon prerequisite: `brew install portaudio` must be present
+# BEFORE this pip batch runs. pyaudio 0.2.14 builds against the
+# Homebrew-installed `portaudio.h` from /opt/homebrew/include.
+# If pyaudio fails with a `portaudio.h not found` compiler error, the
+# M1 build-flag override is:
+#   uv pip install --python .venv/bin/python --global-option='build_ext' \
+#       --global-option='-I/opt/homebrew/include' \
+#       --global-option='-L/opt/homebrew/lib' pyaudio
+# (per AI-RULES.md Rule 5c + project install notes).
+
+# faster-whisper — local STT. CTranslate2-backed, runs Whisper large-v3
+# on Apple Silicon via the arm64 wheel. No API key required.
+faster-whisper==1.2.1
+
+# sounddevice — PortAudio bindings for ambient microphone capture.
+# Sister library to pyaudio; used because pyaudio's input stream
+# ergonomics are awkward in long-lived async loops.
+sounddevice==0.5.5
+
+# pyaudio — PortAudio bindings. Required by pvporcupine's Python
+# demo helpers and used as the secondary capture path.
+pyaudio==0.2.14
+
+# pvporcupine — Picovoice wake-word engine for "Hey Jarvis". Requires
+# a free Picovoice AccessKey (https://console.picovoice.ai/) which
+# must be added to .env as PICOVOICE_ACCESS_KEY before the engine
+# can be initialised. The key is NOT a model download — it is the
+# SDK auth token.
+pvporcupine==4.0.2
+
+# kokoro-onnx — local ONNX-backed TTS. Synthesises natural speech
+# without any cloud API. Models are downloaded on first use from
+# the Kokoro ONNX model repo (see Phase 5 implementation notes).
+kokoro-onnx==0.5.0
+
+# ctranslate2 — inference engine that faster-whisper depends on for
+# CTranslate2-backed Whisper. Pinned explicitly because Apple Silicon
+# wheel selection is sensitive to the ctranslate2 build flags.
+ctranslate2==4.7.2
+
+# av — PyAV, the audio/video container library used by kokoro-onnx
+# for sample-rate / frame-size conversions. Pinned to match the
+# version kokoro-onnx 0.5.0 was tested against.
+av==17.0.1
