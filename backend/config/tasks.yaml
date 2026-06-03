@@ -402,3 +402,134 @@ intelligence_consolidation_task:
     specified. No watered-down summaries.
   agent: intelligence_director
   context: [ app_store_analysis_task ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3a — WORKFLOW 3 (Social Content Briefs — manual posting)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# TASK 0 — Trend Scanning
+trend_scanning_task:
+  description: >
+    Scan for trending topics related to the user's app category.
+    Use Google Trends, Reddit, and YouTube to identify the top 5
+    trending topics with search volume data and source URLs.
+
+    Topic to research: {topic}
+
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a
+      single, flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`.
+    Example of VALID tool input: {{"keyword": "habit tracker India", "timeframe": "today 3-m"}}
+  expected_output: >
+    A numbered list of the top 5 trending topics with search volume
+    data, trend direction (rising/falling/stable), and source URLs.
+  agent: trend_scanner
+  context: []
+
+# TASK 1 — Trend Analysis
+trend_analysis_task:
+  description: >
+    Analyse the top trending topics for engagement potential, audience
+    size, and content angle. Rank the topics by viral potential.
+
+    Use the trend data from trend_scanning_task (shared as context).
+    Look at engagement signals, audience size, competition saturation,
+    and seasonal patterns.
+
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a
+      single, flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`.
+    Example of VALID tool input: {{"keyword": "habit tracker viral content"}}
+  expected_output: >
+    A ranked list of topics by viral potential with reasoning for
+    each ranking. Include engagement signals, audience size, and
+    competition saturation for each.
+  agent: trend_analyser
+  context: [ trend_scanning_task ]
+
+# TASK 2 — Viral Content Idea Generation
+viral_idea_generation_task:
+  description: >
+    Generate 10 viral content ideas for the top ranked topic.
+
+    Use the ranked topics from trend_analysis_task (shared as context).
+    Generate platform-specific ideas for YouTube, Instagram, Twitter,
+    and Reddit. Each idea should include:
+    - Platform (YouTube / Instagram / Twitter / Reddit)
+    - Hook (attention-grabbing opening)
+    - Angle (content direction)
+    - Hashtag strategy
+    - Best posting time
+
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a
+      single, flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`.
+    Example of VALID tool input: {{"query": "habit tracker viral video ideas"}}
+  expected_output: >
+    A list of 10 viral content ideas, each with platform, hook, angle,
+    hashtag strategy, and best posting time. Format as a numbered list
+    grouped by platform.
+  agent: viral_idea_generator
+  context: [ trend_analysis_task ]
+
+# TASK 3 — Community Angle Research
+community_angle_task:
+  description: >
+    Research the best community angles for the top viral content ideas.
+
+    Use the viral ideas from viral_idea_generation_task (shared as context).
+    Identify Reddit communities, YouTube creator communities, and
+    Instagram niche communities that would resonate with the content.
+    Provide community-specific posting strategies.
+
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a
+      single, flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`.
+    Example of VALID tool input: {{"query": "productivity app Reddit community"}}
+  expected_output: >
+    A list of communities with their name, platform, audience size,
+    and posting strategy for each.
+  agent: community_angle_agent
+  context: [ viral_idea_generation_task ]
+
+# TASK 4 — Brief Consolidation
+brief_consolidation_task:
+  description: >
+    Consolidate all content findings into a platform-specific viral
+    content brief.
+
+    You have received outputs from 4 specialists: trend scanner,
+    trend analyser, viral idea generator, and community angle agent.
+    Synthesise into one unified brief using this format:
+
+    ## YouTube Brief
+    - Top 3 video ideas with hooks and angles
+    - Recommended hashtags
+    - Best posting times
+    - Thumbnail suggestions
+
+    ## Instagram Brief
+    - Top 3 post ideas with hooks and captions
+    - Recommended hashtags
+    - Best posting times
+    - Reel concepts
+
+    ## Twitter Brief
+    - Top 3 tweet ideas with hooks and angles
+    - Recommended hashtags
+    - Best posting times
+
+    ## Reddit Brief
+    - Top 3 post ideas with community targeting
+    - Recommended subreddits
+    - Post templates
+
+    CRITICAL INSTRUCTION: You already have all the information from your
+        coworkers in your context. DO NOT use any tools for this task. You must
+        immediately output your Final Answer containing the unified brief.
+  expected_output: >
+    A complete viral content brief with sections for YouTube, Instagram,
+    Twitter, and Reddit. Each section should have at least 3 ideas with
+    hooks, angles, hashtags, and posting times.
+  agent: content_director
+  context: [ trend_scanning_task, trend_analysis_task, viral_idea_generation_task, community_angle_task ]

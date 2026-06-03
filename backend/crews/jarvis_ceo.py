@@ -46,6 +46,7 @@ from backend.crews.dept_crews import (
     build_intelligence_dept_crew,
     run_research_crew_with_retry,
 )
+from backend.crews.content_crew import build_content_dept_crew
 from backend.orchestrator.human_gate import (
     ask_user,
     new_run_id,
@@ -747,6 +748,130 @@ async def run_workflow_4(
             "status": "complete",
             "report_path": str(report_path),
             "report_chars": len(report_markdown),
+        }
+    finally:
+        end_run(run_id)
+
+
+def _write_brief(topic_slug: str, brief_markdown: str) -> Path:
+    """Write the Content Brief to backend/output/Brief_{topic}_{YYYY-MM-DD}.md.
+
+    Per CLAUDE.md "Output Files": always APPEND, never OVERWRITE.
+    """
+    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    base = _OUTPUT_DIR / f"Brief_{topic_slug}_{today}.md"
+    path = base
+    n = 1
+    while path.exists():
+        path = base.with_name(f"{base.stem}-{n}{base.suffix}")
+        n += 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(brief_markdown)
+    log.info("jarvis_ceo: wrote Brief to %s (%d chars)", path, len(brief_markdown))
+    return path
+
+
+async def run_workflow_3_briefs(
+    topic: str,
+    run_id: Optional[str] = None,
+) -> dict:
+    """Run the Social Content Brief workflow for one topic.
+
+    Entry point for Phase 3a (Workflow 3 — brief generation, manual posting).
+
+    Per ADR-0003:
+      - Only `content_dept_crew` is invoked (not automation_dept_crew)
+      - Skyvern is NOT used — developer copy-pastes from the brief
+      - Brief is saved to `backend/output/Brief_{topic}_{date}.md`
+      - ntfy.sh notification fires when brief is ready
+
+    Args:
+        topic: The topic to generate viral content briefs for.
+        run_id: Optional pre-existing run id.
+
+    Returns:
+        A status dict with at least:
+          - run_id: str
+          - status: "complete" | "failed" | "cancelled"
+          - brief_path: str (only on complete)
+    """
+    run_id = run_id or new_run_id()
+    log.info("run_workflow_3_briefs START — run_id=%s topic=%r", run_id, topic)
+
+    write_run_status(
+        run_id, RunStatus.STARTED,
+        note=f"topic={topic!r}",
+        meta={"topic": topic},
+    )
+
+    start_run(run_id, max_tokens=DEFAULT_MAX_TOKENS_PER_RUN)
+    try:
+        try:
+            crew = build_content_dept_crew()
+        except Exception as e:
+            log.error("run_workflow_3_briefs: failed to build content_dept_crew: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"content_crew_build_failed: {e}",
+                meta={"reason": "content_crew_build_failed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "content_crew_build_failed",
+                "error": str(e),
+            }
+
+        try:
+            output = crew.kickoff(inputs={"topic": topic})
+        except BudgetExceeded as e:
+            log.error("run_workflow_3_briefs: budget exceeded: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded",
+                meta={"reason": "budget_exceeded"},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "budget_exceeded",
+            }
+        except Exception as e:
+            log.error("run_workflow_3_briefs: content crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"content_crew_crashed: {e}",
+                meta={"reason": "content_crew_crashed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "content_crew_crashed",
+                "error": str(e),
+            }
+
+        brief_markdown = str(output)
+        topic_slug = _slugify_topic(topic)
+        brief_path = _write_brief(topic_slug, brief_markdown)
+
+        log.info(
+            "run_workflow_3_briefs COMPLETE — run_id=%s brief=%s",
+            run_id, brief_path,
+        )
+        write_run_status(
+            run_id, RunStatus.COMPLETE,
+            note=f"Brief written to {brief_path.name}",
+            meta={
+                "brief_path": str(brief_path),
+                "brief_chars": len(brief_markdown),
+            },
+        )
+        return {
+            "run_id": run_id,
+            "status": "complete",
+            "brief_path": str(brief_path),
+            "brief_chars": len(brief_markdown),
         }
     finally:
         end_run(run_id)

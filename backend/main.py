@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend.crews.jarvis_ceo import run_workflow_2, run_workflow_4
+from backend.crews.jarvis_ceo import run_workflow_2, run_workflow_3_briefs, run_workflow_4
 from backend.orchestrator.human_gate import new_run_id
 from backend.utils import llm_provider  # noqa: F401  (P1.15 minimax/ shim — side-effect import)
 from backend.utils.env_validator import validate_env
@@ -277,5 +277,54 @@ async def start_app_store_intelligence(
             "status": "started",
             "phase": getattr(app.state, "phase", "unknown"),
             "category": req.category,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /workflows/content-briefs — Workflow 3a (Phase 3a)
+# ---------------------------------------------------------------------------
+
+class ContentBriefsRequest(BaseModel):
+    """Request body for `POST /workflows/content-briefs`."""
+    topic: str
+
+
+@app.post("/workflows/content-briefs")
+async def start_content_briefs(
+    req: ContentBriefsRequest,
+    background: BackgroundTasks,
+) -> JSONResponse:
+    """Kick off Workflow 3a (Social Content Briefs) as a background task.
+
+    Per ADR-0003: Phase 3a is brief generation only. Skyvern is NOT used.
+    Developer copy-pastes from the brief and posts manually.
+    """
+    env_ok = getattr(app.state, "env_ok", False)
+    if not env_ok:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "code": 503,
+                "phase": getattr(app.state, "phase", "unknown"),
+                "env_valid": env_ok,
+                "message": "Workflow runs require env validation to pass.",
+            },
+        )
+
+    run_id = new_run_id()
+    background.add_task(run_workflow_3_briefs, req.topic, run_id)
+    logger.info(
+        "POST /workflows/content-briefs: queued run %s for topic=%r",
+        run_id, req.topic,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "run_id": run_id,
+            "status": "started",
+            "phase": getattr(app.state, "phase", "unknown"),
+            "topic": req.topic,
         },
     )
