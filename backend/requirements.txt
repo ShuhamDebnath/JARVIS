@@ -147,6 +147,12 @@ scipy==1.17.1
 # but Silero-VAD is small enough that CPU is fine.
 torch==2.12.0
 
+# torchaudio — required alongside torch for Silero-VAD. The
+# silero-vad package imports torchaudio at VAD init time for
+# audio tensor backend support. Without it, the voice listener
+# background thread crashes with ModuleNotFoundError.
+torchaudio==2.11.0
+
 # mlx + mlx-metal — Apple Silicon ML framework. Both come as
 # transitive deps of mlx-whisper / mlx-audio but pinned here so
 # future clean installs do not silently bump them.
