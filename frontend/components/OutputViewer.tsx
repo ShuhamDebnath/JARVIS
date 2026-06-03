@@ -3,7 +3,7 @@
 /**
  * OutputViewer — scrollable markdown viewer for Phase 4 Next.js dashboard.
  * Loads .md files from backend/output/ via GET /output/{filename}
- * and renders them using react-markdown with Tailwind typography.
+ * and renders them using react-markdown with styled output.
  */
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -61,19 +61,78 @@ export default function OutputViewer() {
         </div>
       )}
 
-      {/* Markdown content — scrollable container */}
+      {/* Markdown content — scrollable container with dark-theme styling */}
       {markdownContent !== null && (
-        <div className="max-h-[600px] overflow-y-auto rounded border border-gray-800 bg-gray-950 p-4">
+        <div
+          className="max-h-[600px] overflow-y-auto rounded border border-gray-800 bg-gray-950 p-4 text-sm"
+          style={{ fontFamily: "Arial, Helvetica, sans-serif" }}
+        >
           <ReactMarkdown
-            className="prose prose-invert prose-sm max-w-none
-                       prose-headings:text-gray-100
-                       prose-p:text-gray-300
-                       prose-strong:text-white
-                       prose-code:text-cyan-300
-                       prose-link:text-blue-400
-                       prose-ul:text-gray-300
-                       prose-li:text-gray-300
-                       prose-hr:border-gray-700"
+            components={{
+              // Headings
+              h1: ({ children }) => (
+                <h1 className="text-xl font-bold text-gray-100 mt-0 mb-3">{children}</h1>
+              ),
+              h2: ({ children }) => (
+                <h2 className="text-lg font-semibold text-gray-100 mt-0 mb-2">{children}</h2>
+              ),
+              h3: ({ children }) => (
+                <h3 className="text-base font-medium text-gray-200 mt-0 mb-2">{children}</h3>
+              ),
+              // Paragraphs and text
+              p: ({ children }) => (
+                <p className="text-gray-300 mb-3 leading-relaxed">{children}</p>
+              ),
+              // Strong and emphasis
+              strong: ({ children }) => (
+                <strong className="text-white font-semibold">{children}</strong>
+              ),
+              em: ({ children }) => (
+                <em className="text-gray-200 italic">{children}</em>
+              ),
+              // Code blocks and inline code
+              code: ({ children, className }) => {
+                const isBlock = className?.includes("language-");
+                return isBlock ? (
+                  <code className="block bg-gray-900 text-cyan-300 text-xs rounded p-3 overflow-x-auto my-3 font-mono">
+                    {children}
+                  </code>
+                ) : (
+                  <code className="text-cyan-300 text-xs bg-gray-900 px-1 rounded">
+                    {children}
+                  </code>
+                );
+              },
+              pre: ({ children }) => (
+                <pre className="bg-gray-900 text-cyan-300 text-xs rounded p-3 overflow-x-auto my-3 font-mono">
+                  {children}
+                </pre>
+              ),
+              // Lists
+              ul: ({ children }) => (
+                <ul className="text-gray-300 mb-3 pl-5 list-disc space-y-1">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="text-gray-300 mb-3 pl-5 list-decimal space-y-1">{children}</ol>
+              ),
+              li: ({ children }) => (
+                <li className="text-gray-300">{children}</li>
+              ),
+              // Blockquotes
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-4 border-gray-600 pl-4 text-gray-400 italic my-3">
+                  {children}
+                </blockquote>
+              ),
+              // Horizontal rule
+              hr: () => <hr className="border-gray-700 my-4" />,
+              // Links
+              a: ({ href, children }) => (
+                <a href={href} className="text-blue-400 hover:text-blue-300 underline" target="_blank" rel="noopener noreferrer">
+                  {children}
+                </a>
+              ),
+            }}
           >
             {markdownContent}
           </ReactMarkdown>
