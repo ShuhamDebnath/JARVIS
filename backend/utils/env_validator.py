@@ -12,8 +12,8 @@
 #     ANTHROPIC_API_KEY  — Claude Vision (Phase 6 / Workflow 1)
 #     FIRECRAWL_API_KEY  — Web scraper (Phase 1, revenue_estimator etc.)
 #
-# Optional (deferred to Phase 5):
-#     PORCUPINE_ACCESS_KEY — Wake word detection
+# Optional (deferred to Phase 5+):
+#     (none — Phase 5 MLX voice stack runs entirely local, no API keys)
 #
 # Per AI-RULES.md Rule 2: human-readable error messages; fail loud with
 # what to do, not silent.
@@ -44,7 +44,6 @@ _PLACEHOLDERS = {
     "replace_me_with_real_anthropic_key",
     "replace_me_with_real_serper_key",
     "replace_me_with_real_firecrawl_key",
-    "replace_me_with_real_picovoice_key",
 }
 
 # Required for Phase 0a + Phase 1 (your Step 4 instruction).
@@ -69,9 +68,12 @@ WARN_KEYS = [
 ]
 
 # Optional — Phase 5+ (voice layer).
-OPTIONAL_KEYS = [
-    "PORCUPINE_ACCESS_KEY",
-]
+# Phase 5 pivoted to a 100% local MLX voice stack (mlx-whisper +
+# mlx-audio + Silero-VAD via torch). No external API keys are
+# required, so the OPTIONAL list is intentionally empty for the
+# voice layer. Keep this list present so future optional keys have
+# a home without a code change.
+OPTIONAL_KEYS: list[str] = []
 
 
 def _is_placeholder(value: str | None) -> bool:
@@ -136,34 +138,18 @@ def validate_env() -> bool:
             print(f"  [OK]       {key:<22}  — {value[:4]}***")
 
     # Optional keys — only report; never fail.
-    # Phase 5: PORCUPINE_ACCESS_KEY lands here. Missing it does NOT
-    # block Phases 0-4 — the wake-word listener (Phase 5.1) will
-    # log an error and return False when the user calls it. The
-    # explicit Voice-Layer warning below makes this clear both in
-    # the CLI report AND in backend/logs/jarvis.log.
-    voice_layer_disabled = False
+    # Phase 5 MLX pivot: no optional API keys are required for the
+    # voice layer (mlx-whisper + mlx-audio + Silero-VAD all run
+    # locally). The loop is preserved so future optional keys have
+    # a stable home.
     for key in OPTIONAL_KEYS:
         value = os.environ.get(key)
         if value is None or _is_placeholder(value):
-            if key == "PORCUPINE_ACCESS_KEY":
-                print(f"  [SKIP]     {key:<22}  — Voice Layer (Phase 5) DISABLED")
-                voice_layer_disabled = True
-            else:
-                print(f"  [SKIP]     {key:<22}  — optional (Phase 5)")
+            print(f"  [SKIP]     {key:<22}  — optional")
         else:
             print(f"  [OK]       {key:<22}  — {value[:4]}***")
 
-    # If the wake-word key is missing, surface a structured WARNING
-    # in the Jarvis log so the operator sees it during the FastAPI
-    # lifespan startup (not just the one-off CLI report). The log
-    # line points the operator at the fix.
-    if voice_layer_disabled:
-        logger.warning(
-            "PORCUPINE_ACCESS_KEY is missing — Voice Layer (Phase 5) is "
-            "disabled. Phases 0-4 keep working normally. Get a free key at "
-            "https://console.picovoice.ai/ and add it to .env as "
-            "PORCUPINE_ACCESS_KEY to enable 'Hey Jarvis' wake word detection."
-        )
+    # Phase 5 MLX stack is fully local. No Voice-Layer warning needed.
 
     print("-" * 60)
     if all_ok:

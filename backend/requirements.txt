@@ -114,49 +114,51 @@ skyvern==1.0.37
 pyautogui==0.9.54
 
 # ----------------------------------------------------------------------------
-# Phase 5 — Voice Layer (Wake Word + STT + TTS)  (installed 2026-06-03)
+# Phase 5 — Local Voice Stack (installed 2026-06-03, MLX pivot)
 # ----------------------------------------------------------------------------
-# Apple Silicon prerequisite: `brew install portaudio` must be present
-# BEFORE this pip batch runs. pyaudio 0.2.14 builds against the
-# Homebrew-installed `portaudio.h` from /opt/homebrew/include.
-# If pyaudio fails with a `portaudio.h not found` compiler error, the
-# M1 build-flag override is:
-#   uv pip install --python .venv/bin/python --global-option='build_ext' \
-#       --global-option='-I/opt/homebrew/include' \
-#       --global-option='-L/opt/homebrew/lib' pyaudio
-# (per AI-RULES.md Rule 5c + project install notes).
-
-# faster-whisper — local STT. CTranslate2-backed, runs Whisper large-v3
-# on Apple Silicon via the arm64 wheel. No API key required.
-faster-whisper==1.2.1
+# 100% local, privacy-first voice pipeline. No proprietary keys, no
+# cloud API calls. All inference runs on the Apple Silicon GPU/Neural
+# Engine via MLX where possible, with PyTorch used for Silero-VAD.
+#
+# Architecture:
+#   Gatekeeper (VAD) — Silero-VAD via torch (microscopic, drops background
+#                      noise to save CPU cycles)
+#   STT              — mlx-whisper (mlx-community/whisper-base.en-mlx, ~140 MB)
+#   TTS              — mlx-audio (mlx-community/Kokoro-82M-bf16, ~355 MB)
+#
+# Apple Silicon is REQUIRED (MLX is not available on Intel Macs). The
+# Homebrew `portaudio` prerequisite from AI-RULES.md Rule 5c is still
+# needed for sounddevice.
 
 # sounddevice — PortAudio bindings for ambient microphone capture.
-# Sister library to pyaudio; used because pyaudio's input stream
-# ergonomics are awkward in long-lived async loops.
+# Used as the primary capture path for the VAD + STT loop.
 sounddevice==0.5.5
 
-# pyaudio — PortAudio bindings. Required by pvporcupine's Python
-# demo helpers and used as the secondary capture path.
-pyaudio==0.2.14
+# numpy — array operations for audio buffer math (RMS, VAD windowing).
+numpy==2.4.6
 
-# pvporcupine — Picovoice wake-word engine for "Hey Jarvis". Requires
-# a free Picovoice AccessKey (https://console.picovoice.ai/) which
-# must be added to .env as PICOVOICE_ACCESS_KEY before the engine
-# can be initialised. The key is NOT a model download — it is the
-# SDK auth token.
-pvporcupine==4.0.2
+# scipy — signal processing helpers (resampling, filtering) for the
+# audio pipeline between the mic and the MLX models.
+scipy==1.17.1
 
-# kokoro-onnx — local ONNX-backed TTS. Synthesises natural speech
-# without any cloud API. Models are downloaded on first use from
-# the Kokoro ONNX model repo (see Phase 5 implementation notes).
-kokoro-onnx==0.5.0
+# torch — PyTorch is used to run the Silero-VAD gatekeeper model
+# (snakers4/silero-vad). The full torch install is large; we keep
+# the CPU wheel here. On Apple Silicon, the MPS backend is available
+# but Silero-VAD is small enough that CPU is fine.
+torch==2.12.0
 
-# ctranslate2 — inference engine that faster-whisper depends on for
-# CTranslate2-backed Whisper. Pinned explicitly because Apple Silicon
-# wheel selection is sensitive to the ctranslate2 build flags.
-ctranslate2==4.7.2
+# mlx + mlx-metal — Apple Silicon ML framework. Both come as
+# transitive deps of mlx-whisper / mlx-audio but pinned here so
+# future clean installs do not silently bump them.
+mlx==0.31.2
+mlx-metal==0.31.2
+mlx-lm==0.31.3
 
-# av — PyAV, the audio/video container library used by kokoro-onnx
-# for sample-rate / frame-size conversions. Pinned to match the
-# version kokoro-onnx 0.5.0 was tested against.
-av==17.0.1
+# mlx-whisper — Apple Silicon STT. Model is auto-downloaded on first
+# use from mlx-community/whisper-base.en-mlx (~140 MB). No API key.
+mlx-whisper==0.4.3
+
+# mlx-audio — Apple Silicon TTS. Bundles the Kokoro model loader.
+# On first use, pulls mlx-community/Kokoro-82M-bf16 (~355 MB) from
+# Hugging Face. No API key.
+mlx-audio==0.4.3

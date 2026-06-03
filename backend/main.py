@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 import json
+from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,10 +39,20 @@ from backend.orchestrator.human_gate import new_run_id
 from backend.utils import llm_provider  # noqa: F401  (P1.15 minimax/ shim — side-effect import)
 from backend.utils.env_validator import validate_env
 from backend.utils.logger import get_logger
+from backend.voice.listener import JarvisVoiceCore
 
 # Logger for this module. Using `__name__` means log lines will be tagged
 # `backend.main` — easy to grep for when debugging the server.
 logger = get_logger(__name__)
+
+# Phase 5 — single global voice controller. The instance is created
+# here (not on first request) so its `__init__` runs once on import.
+# `start_listening()` is NOT called automatically — the mic is off
+# until the operator (or the dashboard) toggles `mic_enabled` to True
+# via POST /api/voice/settings. This matches the safety default in
+# `JarvisVoiceCore.__init__` (mic_enabled=False, tts_enabled=True,
+# auto_execute=False).
+voice_core = JarvisVoiceCore()
 
 # Origins that the Next.js frontend (frontend/, Phase 0d+) will hit us from
 # during local dev. Tightening this further (e.g. removing 3000 when no
@@ -445,3 +456,67 @@ def get_workflow_runs() -> JSONResponse:
     except (json.JSONDecodeError, OSError) as e:  # type: ignore[reportPossiblyUnboundVariable]
         logger.warning("GET /workflows/runs: failed to read runs.json — %s", e)
         return JSONResponse(content={})
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Voice Layer control endpoints
+# ---------------------------------------------------------------------------
+#
+# Three hardware-aware toggles are exposed under /api/voice/settings:
+#   - mic_enabled   : start/stop the background VAD + STT loop
+#   - tts_enabled   : speak responses aloud (True) or stay silent (False)
+#   - auto_execute  : run matched workflows immediately (True) or stage
+#                     them on the dashboard for manual confirmation (False)
+#
+# The Next.js dashboard (frontend/components/VoiceControls.tsx) reads
+# the current state on mount and POSTs deltas when the operator
+# flips a switch. The mic toggle has a side-effect: start_listening()
+# or stop_listening() on the global `voice_core` instance.
+
+class VoiceSettingsUpdate(BaseModel):
+    """Request body for `POST /api/voice/settings`.
+
+    All fields are Optional so the operator can update one toggle
+    without re-sending the other two. Touched fields are applied
+    via `voice_core.update_settings(...)` which also handles the
+    start/stop side-effect on a `mic_enabled` flip.
+    """
+    mic_enabled: Optional[bool] = None
+    tts_enabled: Optional[bool] = None
+    auto_execute: Optional[bool] = None
+
+
+@app.get("/api/voice/settings")
+def get_voice_settings() -> JSONResponse:
+    """Return the current voice-toggle snapshot.
+
+    Response shape (always the same 4 fields, JSON-serialisable):
+        {
+            "mic_enabled":   bool,
+            "tts_enabled":   bool,
+            "auto_execute":  bool,
+            "is_listening":  bool,   # true if the background worker is alive
+        }
+    """
+    return JSONResponse(content=voice_core.get_settings())
+
+
+@app.post("/api/voice/settings")
+def update_voice_settings(req: VoiceSettingsUpdate) -> JSONResponse:
+    """Apply a partial update to the voice toggles.
+
+    The mic toggle has a hardware side-effect:
+        - False → True : spawns the background listener thread
+        - True  → False: signals the listener to stop and joins it
+    The other two toggles are pure state changes — no hardware touched.
+    """
+    new_settings = voice_core.update_settings(
+        mic_enabled=req.mic_enabled,
+        tts_enabled=req.tts_enabled,
+        auto_execute=req.auto_execute,
+    )
+    logger.info(
+        "POST /api/voice/settings: applied %r — new=%r",
+        req.model_dump(exclude_none=True), new_settings,
+    )
+    return JSONResponse(content=new_settings)

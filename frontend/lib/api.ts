@@ -113,3 +113,59 @@ export async function fetchOutput(filename: string): Promise<string> {
   );
   return data.content;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Voice Layer control (Next.js dashboard → FastAPI)
+// ---------------------------------------------------------------------------
+
+/**
+ * VoiceSettings — the 3 hardware-aware toggles + a derived is_listening
+ * flag surfaced by GET /api/voice/settings.
+ *
+ *   mic_enabled   : start/stop the background VAD + STT loop
+ *   tts_enabled   : speak responses aloud (True) or stay silent (False)
+ *   auto_execute  : run matched workflows immediately (True) or stage
+ *                   them on the dashboard for manual confirmation (False)
+ *   is_listening  : read-only — true while the background worker is alive
+ */
+export interface VoiceSettings {
+  mic_enabled: boolean;
+  tts_enabled: boolean;
+  auto_execute: boolean;
+  is_listening: boolean;
+}
+
+/**
+ * VoiceSettingsUpdate — partial-update payload for POST /api/voice/settings.
+ * Any field left out keeps its current server-side value.
+ */
+export interface VoiceSettingsUpdate {
+  mic_enabled?: boolean;
+  tts_enabled?: boolean;
+  auto_execute?: boolean;
+}
+
+/**
+ * fetchVoiceSettings — GET /api/voice/settings. Returns the current
+ * 4-field snapshot. Throws on transport error.
+ */
+export async function fetchVoiceSettings(): Promise<VoiceSettings> {
+  return request<VoiceSettings>("/api/voice/settings");
+}
+
+/**
+ * updateVoiceSettings — POST /api/voice/settings with a partial-update
+ * body. The FastAPI handler reacts to a `mic_enabled` flip by
+ * starting or stopping the background listener thread; the dashboard
+ * just sees the new snapshot in the response.
+ *
+ * @returns The updated VoiceSettings snapshot.
+ */
+export async function updateVoiceSettings(
+  patch: VoiceSettingsUpdate
+): Promise<VoiceSettings> {
+  return request<VoiceSettings>("/api/voice/settings", {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
+}

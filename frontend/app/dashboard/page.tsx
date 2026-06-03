@@ -7,6 +7,7 @@ import WorkflowCard from "@/components/WorkflowCard";
 import AgentStatus from "@/components/AgentStatus";
 import OutputViewer from "@/components/OutputViewer";
 import ComingSoon from "@/components/ComingSoon";
+import VoiceControls from "@/components/VoiceControls";
 
 export default function DashboardPage() {
   return (
@@ -22,6 +23,12 @@ export default function DashboardPage() {
         <section>
           <h2 className="text-lg font-semibold mb-3 text-gray-300">Agent Status</h2>
           <AgentStatus />
+        </section>
+
+        {/* Voice Layer Controls (Phase 5) */}
+        <section>
+          <h2 className="text-lg font-semibold mb-3 text-gray-300">Voice Layer</h2>
+          <VoiceControls />
         </section>
 
         {/* Workflow Grid */}
