@@ -68,6 +68,9 @@ hello_task:
 research_interpretation_task:
   description: >
     Interpret the user's one-sentence app idea into a structured brief.
+
+    The user's app idea is: {app_idea}
+
     Output ONLY this JSON shape — no other text, no markdown fences:
     {{
       "app_category": "<one of: productivity | health | education | finance | social | utility | other>",
@@ -82,7 +85,6 @@ research_interpretation_task:
     Valid JSON matching the schema above. No prose, no markdown fences.
     The next task in this crew depends on this output being parseable.
   agent: research_interpreter
-  output_pydantic: backend.contracts.research.ResearchInterpretation
   max_retries: 3
 
 # TASKS 1-6 — Six parallel research specialists
@@ -107,13 +109,18 @@ research_pain_point_task:
     the interpretation's app_category.
     Return the top 10 pain points. For each: the pain point, source
     URL, and a direct quote or evidence.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your tools (like RedditTool), 
+      you MUST pass a single, flat JSON dictionary with plain string values. 
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"query": "hostel routine struggles", "limit": 10}}
   expected_output: >
     A numbered list of 10 pain points with source URLs and evidence
     quotes. Search keywords and subreddits used MUST match the
     interpretation document.
   agent: pain_point_hunter
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 research_competitor_mapping_task:
   description: >
@@ -128,13 +135,18 @@ research_competitor_mapping_task:
     the interpretation) for the top 10 competitors.
     For each app return: name, rating, estimated downloads, last
     update date, price, key strength, key weakness.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your scraper tools, 
+      pass a single flat dictionary. NEVER use arrays or list brackets `[]` 
+      in your Action Input.
+    Example of VALID tool input: {{"query": "habit tracker app", "limit": 10}}
   expected_output: >
     A markdown table with 10 competitors and all required columns
     filled. App store categories searched MUST match the interpretation
     document.
   agent: competitor_mapper
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 research_revenue_estimation_task:
   description: >
@@ -149,12 +161,17 @@ research_revenue_estimation_task:
     velocity.
     Return: revenue range, top 3 monetisation models used, India
     pricing context.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a single,
+      flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"search_query": "habit tracker app India revenue"}}
   expected_output: >
     Revenue range estimate, monetisation model breakdown, India-specific
     pricing note.
   agent: revenue_estimator
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 research_gap_finding_task:
   description: >
@@ -169,11 +186,16 @@ research_gap_finding_task:
     Reddit complaints.
     Only report gaps that appear in multiple sources.
     For each gap: description, evidence count, and example quotes.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a single, 
+      flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"query": "habit tracker app reviews", "limit": 10}}
   expected_output: >
     Top 5 feature gaps with evidence count and example quotes for each.
   agent: gap_finder
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 research_trend_validation_task:
   description: >
@@ -188,6 +210,11 @@ research_trend_validation_task:
     the last 12 months.
     Search for recent news about this market.
     Include India-specific signals.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a single,
+      flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"keyword": "habit tracking", "timeframe": "today 5-y"}}
   expected_output: >
     Trend direction (growing/stable/declining), velocity score,
     India-specific trend data, and 3 supporting data points.
@@ -195,7 +222,7 @@ research_trend_validation_task:
     document.
   agent: trend_validator
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 research_audience_sizing_task:
   description: >
@@ -209,13 +236,18 @@ research_audience_sizing_task:
     Use subreddit subscriber counts, monthly keyword search volumes,
     and App Store category download estimates.
     Always break out India-specific numbers separately.
+    
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a single,
+      flat JSON dictionary with plain string values.
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"search_query": "India college students total number"}}
   expected_output: >
     Global TAM estimate, India SAM estimate, primary demographic profile
     (age range, occupation, device type). Subreddits and keywords used
     MUST match the interpretation document.
   agent: audience_sizer
   async_execution: true
-  context: [research_interpretation_task]
+  context: [ research_interpretation_task ]
 
 # TASK 7 — Consolidation (sync, blocks on all 6 async tasks)
 research_consolidation_task:
@@ -231,14 +263,19 @@ research_consolidation_task:
     - Biggest gap found
     - Trend direction and velocity
     - India-specific insight
+    
+    CRITICAL INSTRUCTION: You already have all the information from your
+        coworkers in your context. DO NOT use any tools for this task. You must
+        immediately output your Final Answer containing the unified markdown brief.
+
   expected_output: >
     A structured research brief in the exact format specified.
     No watered-down summaries — include the strongest evidence from
     each specialist.
   agent: research_director
-  context: [research_pain_point_task, research_competitor_mapping_task,
-            research_revenue_estimation_task, research_gap_finding_task,
-            research_trend_validation_task, research_audience_sizing_task]
+  context: [ research_pain_point_task, research_competitor_mapping_task,
+             research_revenue_estimation_task, research_gap_finding_task,
+             research_trend_validation_task, research_audience_sizing_task ]
 
 # TASK 8 — Opportunity Scoring (product_dept)
 # The human gate happens AFTER this task returns. The CEO orchestrator
@@ -324,4 +361,4 @@ product_prd_writing_task:
   # in this context list. The research_brief reaches this task via
   # the CEO's `kickoff(inputs={"research_brief": ...})` call — see
   # ADR-0000 Q3.
-  context: [product_opportunity_scoring_task]
+  context: [ product_opportunity_scoring_task ]

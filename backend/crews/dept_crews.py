@@ -33,8 +33,9 @@ Phase discipline:
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import yaml
 from crewai import Agent, Crew, Process, Task
@@ -285,6 +286,9 @@ def _build_agent(agent_key: str, agents_cfg: dict[str, Any], llm: Any = None) ->
     # BaseTool instances.
     tool_names = kwargs.pop("tools", []) or []
     kwargs["tools"] = _resolve_tools(tool_names)
+
+    kwargs["max_iter"] = 3
+
     log.debug(
         "agent %r built: role=%r tools=%s",
         agent_key, kwargs.get("role"), [t.name for t in kwargs["tools"]],
@@ -670,37 +674,54 @@ def build_product_dept_crew(
 def _extract_interpretation(crew_output: Any) -> Optional[ResearchInterpretation]:
     """Pull the research_interpretation_task's parsed output from a crew result.
 
-    CrewAI's `crew.kickoff()` returns a `CrewOutput` whose
-    `.tasks_output` is a list of `TaskOutput` in task order. We find
-    the interpretation task by name and read its `.pydantic`
-    attribute — set by the `output_pydantic` validator on successful
-    runs, `None` on failure.
+    Per P1.15 Action 3: built-in CrewAI Pydantic validation is DISABLED
+    to avoid the MiniMax "Instructor does not support multiple tool
+    calls" error. We now manually parse the `.raw` string.
 
     Args:
         crew_output: The return value of `crew.kickoff()`.
 
     Returns:
         The validated `ResearchInterpretation` instance, or `None`
-        if the task did not produce a parseable Pydantic result
-        (validation failure, missing task, or unexpected shape).
+        if the task did not produce a parseable JSON matching the
+        schema.
     """
     if crew_output is None or not hasattr(crew_output, "tasks_output"):
         return None
+
     for to in crew_output.tasks_output:
+        # Task name check must match tasks.yaml key exactly.
         if getattr(to, "name", "") == "research_interpretation_task":
-            pyd = getattr(to, "pydantic", None)
-            if isinstance(pyd, ResearchInterpretation):
-                return pyd
-            # `pydantic` may also be a raw dict (some CrewAI
-            # versions) or `None` (validation failure). Anything
-            # else is a fallback case the caller should treat as
-            # a failure.
-            return None
+            raw_output = getattr(to, "raw", "")
+            if not raw_output:
+                log.warning("_extract_interpretation: Task output is empty.")
+                return None
+
+            # Clean potential markdown block wrappers (MiniMax sometimes
+            # includes them even if told not to).
+            cleaned = raw_output.strip()
+            if cleaned.startswith("```"):
+                # Handle ```json ... ``` or just ``` ... ```
+                lines = cleaned.splitlines()
+                if len(lines) > 2:
+                    # Remove first and last lines (fences)
+                    cleaned = "\n".join(lines[1:-1]).strip()
+
+            try:
+                parsed_json = json.loads(cleaned)
+                return ResearchInterpretation.model_validate(parsed_json)
+            except (json.JSONDecodeError, ValidationError) as e:
+                log.warning(
+                    "_extract_interpretation: Manual parsing/validation "
+                    "failed: %s. Raw output: %r", e, raw_output,
+                )
+                return None
+
     return None
 
 
 def run_research_crew_with_retry(
-    crew: Crew,
+    crew_factory: Callable[[], Crew],
     inputs: dict[str, Any],
     max_retries: int = _MAX_INTERPRETATION_ATTEMPTS,
 ) -> Any:
@@ -708,24 +729,41 @@ def run_research_crew_with_retry(
 
     Per ADR-0002 Q6: `output_pydantic` does not retry on its own in
     CrewAI 0.86.0 — we have to do it in Python. This function:
-      1. Calls `crew.kickoff(inputs=...)`.
-      2. Extracts the `ResearchInterpretation` from the result.
-      3. If valid, returns the result.
-      4. If not, re-runs with the Pydantic error message re-injected
-         into the interpreter task's description (the next attempt's
-         LLM sees the validation error and tries again).
-      5. After `max_retries` unsuccessful attempts, raises
+      1. Calls `crew_factory()` to build a FRESH `Crew` instance.
+      2. Calls `crew.kickoff(inputs=...)`.
+      3. Extracts the `ResearchInterpretation` from the result.
+      4. If valid, returns the result.
+      5. If not, re-runs with a brand-new crew on the next attempt.
+      6. After `max_retries` unsuccessful attempts, raises
          `InterpretationValidationError`.
 
     The CEO orchestrator (P1.5) catches that exception, writes the
     failed_interpretation_{run_id}.md transcript, and sets runs.json
     status=failed.
 
+    P1.15 Action 2 fix — factory pattern, not pre-built crew:
+        CrewAI 0.86.0 has a known stateful-crew bug: calling
+        `crew.kickoff()` more than once on the SAME hierarchical
+        crew object mutates its internal `manager_agent` state and
+        produces `ValidationError: Manager agent should not have
+        tools` on attempt 2+. The previous signature took a
+        pre-built `Crew`; the new one takes a zero-arg factory and
+        calls it inside the loop so attempt 1, 2, 3 each get a
+        pristine Crew with no cross-attempt state. The
+        `crew_factory` argument is typically just
+        `build_research_dept_crew` (which has all-optional kwargs).
+
     Args:
-        crew: The crew returned by `build_research_dept_crew()`.
+        crew_factory: A zero-argument callable that returns a fresh
+            `crewai.Crew` instance. In production this is
+            `build_research_dept_crew` (all kwargs defaulted). Build
+            errors are deterministic and surface immediately — no
+            retry budget burned on a YAML/Pydantic typo.
         inputs: The dict passed to `crew.kickoff(inputs=...)`. For
-            Workflow 2, the only input is `{"idea": "<user's
-            one-sentence app idea>"}` (per ADR-0000 Q5).
+            Workflow 2, the only input is `{"app_idea": "<user's
+            one-sentence app idea>"}` (P1.15 Action 1: was `idea`
+            before — renamed to match the `{app_idea}` placeholder
+            in `research_interpretation_task`).
         max_retries: Total attempts. Default 3 (1 initial + 2
             retries). Capped at 3 per ADR-0002 Q6.
 
@@ -736,6 +774,10 @@ def run_research_crew_with_retry(
     Raises:
         InterpretationValidationError: After all `max_retries`
             attempts fail to produce a valid ResearchInterpretation.
+        Exception: Any build error from `crew_factory()` is
+            re-raised as-is (no retry — build is deterministic). The
+            CEO catches it and writes a `research_crew_build_failed`
+            status.
 
     Notes:
         - The retry-loop transcript (every prompt + every response
@@ -768,6 +810,22 @@ def run_research_crew_with_retry(
             "run_research_crew_with_retry: attempt %d / %d",
             attempt, max_retries,
         )
+        # Build a brand-new Crew for every attempt. P1.15 Action 2
+        # fix — see the docstring for the CrewAI 0.86.0
+        # "Manager agent should not have tools" stateful-crew
+        # bug rationale. Build errors are deterministic, so we
+        # surface them immediately (no retry budget burned on a
+        # YAML/Pydantic typo).
+        try:
+            crew = crew_factory()
+        except Exception as e:
+            log.error(
+                "run_research_crew_with_retry: attempt %d — crew_factory() "
+                "raised (build is deterministic, not retrying): %s",
+                attempt, e, exc_info=True,
+            )
+            raise
+
         try:
             last_crew_output = crew.kickoff(inputs=inputs)
         except ValidationError as e:
