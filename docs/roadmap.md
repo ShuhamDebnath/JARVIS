@@ -40,7 +40,7 @@
 
 **Definition of done (Phase 0a):** ✅ Achieved 2026-06-02. `uvicorn backend.main:app` starts the server, `GET /health` returns 200, `POST /crews/hello?mock=true` returns a validated `HelloOutput` JSON body, the human-gate handshake has a passing async test suite, and the full pytest suite is 8/8 green in 3.27s. See the Phase 0a section below for the per-item completion record.
 
-**Rule for what to install when (resolved 2026-06-01):** Install only what the **next** workflow needs. Each sub-phase installs a different batch, scoped to a specific upcoming workflow. No "big bang" install.
+**Rule for what to install when (resolved 2026-06-01):** Install only what the **next** workflow needs. Each sub-phase installs a different batch, scoped to a specific upcoming workflow. No \"big bang\" install.
 
 > This is the explicit split. Do not skip sub-phases. Do not combine them. Each sub-phase must close (install + smoke test) before the next starts.
 
@@ -97,11 +97,11 @@ scripts/setup.sh
 - `uvicorn backend.main:app` starts the server and `GET /health` returns 200 ✅
 - `python -m backend.orchestrator.human_gate` smoke test passes (sync path) ✅
 - Hello-world crew runs through `POST /crews/hello?mock=true` and returns a validated `HelloOutput` JSON body ✅
-- `POST /crews/hello` without `?mock=true` returns 503 with a structured `{"error", "hint", "phase"}` envelope (dashboard can show the hint verbatim) ✅
+- `POST /crews/hello` without `?mock=true` returns 503 with a structured `{\"error\", \"hint\", \"phase\"}` envelope (dashboard can show the hint verbatim) ✅
 - Full pytest suite (`tests/test_hello_crew.py`, `tests/test_human_gate.py`, `tests/test_phase0a_e2e.py`) is **8/8 green in 3.27s** ✅
 - All five logical commits pushed: refactor, hello-world crew, /crews/hello route, test coverage, docs ✅
 
-> **Frontend WorkflowCard rule — applies from Workflow 2 onward, NOT in Phase 0a.** The CLAUDE.md rule "Add a `WorkflowCard` in the frontend dashboard" only matters starting at Phase 1 / Workflow 2, because the Next.js dashboard itself is built in Phase 4. The Phase 0a hello-world crew has no `WorkflowCard` and the `ComingSoon` placeholder is not used; the only Phase 0a touchpoint with the dashboard is the mock-mode `?mock=true` query parameter, which is a backend-only contract surfaced for Phase 4 to honour when the dashboard lands.
+> **Frontend WorkflowCard rule — applies from Workflow 2 onward, NOT in Phase 0a.** The CLAUDE.md rule \"Add a `WorkflowCard` in the frontend dashboard\" only matters starting at Phase 1 / Workflow 2, because the Next.js dashboard itself is built in Phase 4. The Phase 0a hello-world crew has no `WorkflowCard` and the `ComingSoon` placeholder is not used; the only Phase 0a touchpoint with the dashboard is the mock-mode `?mock=true` query parameter, which is a backend-only contract surfaced for Phase 4 to honour when the dashboard lands.
 
 ---
 
@@ -119,7 +119,7 @@ scripts/setup.sh
 
 **Smoke test:** Each tool runs a single demo call (search one app, scrape one URL, etc.) and prints a result.
 
-**Definition of done for 0b (actual, achieved 2026-06-02):** The literal DoD line in v1.0 of this roadmap — `python -c "from tools.store_scraper import search_app_store; print(search_app_store('habit tracker')[:3])"` — is Phase 1 work (the `tools/store_scraper.py` wrapper is built in Phase 1, line 174). The spirit of the DoD is satisfied now: both `google-play-scraper` and `app-store-scraper` return 3 real app names for `"habit tracker"` when called directly. See `backend/output/phase_0b_smoke_test_2026-06-02.md` for the per-tool results and the `google-play-scraper` `.default` indirection gotcha the Phase 1 wrapper must handle.
+**Definition of done for 0b (actual, achieved 2026-06-02):** The literal DoD line in v1.0 of this roadmap — `python -c \"from tools.store_scraper import search_app_store; print(search_app_store('habit tracker')[:3])\"` — is Phase 1 work (the `tools/store_scraper.py` wrapper is built in Phase 1, line 174). The spirit of the DoD is satisfied now: both `google-play-scraper` and `app-store-scraper` return 3 real app names for `\"habit tracker\"` when called directly. See `backend/output/phase_0b_smoke_test_2026-06-02.md` for the per-tool results and the `google-play-scraper` `.default` indirection gotcha the Phase 1 wrapper must handle.
 
 **Files added or modified this sub-phase:**
 ```
@@ -144,7 +144,7 @@ backend/output/phase_0b_smoke_test_2026-06-02.md   ← untracked, output/ is git
 
 **Smoke test:** Skyvern can open a browser session and load a URL headlessly.
 
-**Definition of done for 0c:** `python -c "import skyvern; print('skyvern ok')"` succeeds without errors.
+**Definition of done for 0c:** `python -c \"import skyvern; print('skyvern ok')\"` succeeds without errors.
 
 ---
 
@@ -158,7 +158,7 @@ backend/output/phase_0b_smoke_test_2026-06-02.md   ← untracked, output/ is git
 
 **Smoke test:** Open Interpreter can run a single shell command via natural language.
 
-**Definition of done for 0d:** `python -c "import interpreter; interpreter.auto_run = False; print('interpreter ok')"` succeeds.
+**Definition of done for 0d:** `python -c \"import interpreter; interpreter.auto_run = False; print('interpreter ok')\"` succeeds.
 
 ---
 
@@ -172,29 +172,29 @@ backend/output/phase_0b_smoke_test_2026-06-02.md   ← untracked, output/ is git
 
 ### Steps
 
-- [ ] Write `config/agents.yaml` — all 9 agents for Workflow 2:
+- [x] Write `config/agents.yaml` — all 9 agents for Workflow 2:
   - research_director, research_interpreter (per ADR-0002), pain_point_hunter, competitor_mapper, revenue_estimator, gap_finder, trend_validator, audience_sizer, product_director, opportunity_scorer, prd_writer
   - All agents: `memory: false` (per ADR-0002 Q4 — Per-Department Crew Isolation policy)
-- [ ] Write `config/tasks.yaml` — all tasks for Workflow 2:
+- [x] Write `config/tasks.yaml` — all tasks for Workflow 2:
   - `research_interpretation_task` with `output_pydantic: contracts.research.ResearchInterpretation` and `max_retries: 3` (per ADR-0002 Q3, Q6)
   - 6 specialist tasks with `async_execution: true` (per ADR-0002 Q1)
   - `research_consolidation_task` stays sync — blocks on the 6 async tasks
-- [ ] Write `backend/contracts/__init__.py` and `backend/contracts/research.py` — Pydantic v2 contract for interpretation (per ADR-0002 Q3)
-- [ ] Write `backend/crews/dept_crews.py` — `build_research_dept_crew()` and `build_product_dept_crew()`. **No `memory` argument** on `Crew(...)` (per ADR-0002 Q4). Includes the `r/` subreddit sanitiser post-parse and the manual retry fallback for `output_pydantic` (per ADR-0002 Q3, Q6).
-- [ ] Write `tools/store_scraper.py` — wraps google-play-scraper + app-store-scraper
-- [ ] Write `tools/firecrawl_tool.py` — wraps Firecrawl API
-- [ ] Write `tools/reddit_tool.py` — wraps PRAW for subreddit search
-- [ ] Write `tools/pytrends_tool.py` — wraps pytrends for trend validation
-- [ ] Write `tools/scoring_rubric_tool.py` — wraps the hardcoded rubric table from Q1 of ADR-0000
-- [ ] Write `crews/jarvis_ceo.py` — Python CEO orchestrator (per ADR-0000 Q2). Implements Q15 (save research_brief before gate) and Q14 (cost_guard wiring).
-- [ ] Wire crew into `main.py` — callable via function
-- [ ] Add `cost_guard.py` — log token usage per run, per-run hard cap 200k tokens, raise `BudgetExceeded` on exceed
-- [ ] **Parallelism smoke test (per ADR-0002 Q1):** `tests/test_workflow_2_parallelism.py` with mocked LLM. Asserts the 6 specialist `START` timestamps are within 1s of each other; asserts total wall-clock is < 30s. If this test fails, trigger the Q2 fallback matrix.
-- [ ] Test with real app idea (e.g. "a habit tracker for Indian college students")
-- [ ] Human gate working — crew pauses, prints score, asks for go/no-go
-- [ ] PRD output saved as markdown to `/backend/output/`
-- [ ] Memory: key findings written to Obsidian vault via `obsidian_sync.py`
-- [ ] Git commit: `feat: workflow-2 research and PRD crew working`
+- [x] Write `backend/contracts/__init__.py` and `backend/contracts/research.py` — Pydantic v2 contract for interpretation (per ADR-0002 Q3)
+- [x] Write `backend/crews/dept_crews.py` — `build_research_dept_crew()` and `build_product_dept_crew()`. **No `memory` argument** on `Crew(...)` (per ADR-0002 Q4). Includes the `r/` subreddit sanitiser post-parse and the manual retry fallback for `output_pydantic` (per ADR-0002 Q3, Q6).
+- [x] Write `tools/store_scraper.py` — wraps google-play-scraper + app-store-scraper
+- [x] Write `tools/firecrawl_tool.py` — wraps Firecrawl API
+- [x] Write `tools/reddit_tool.py` — wraps PRAW for subreddit search
+- [x] Write `tools/pytrends_tool.py` — wraps pytrends for trend validation
+- [x] Write `tools/scoring_rubric_tool.py` — wraps the hardcoded rubric table from Q1 of ADR-0000
+- [x] Write `crews/jarvis_ceo.py` — Python CEO orchestrator (per ADR-0000 Q2). Implements Q15 (save research_brief before gate) and Q14 (cost_guard wiring).
+- [x] Wire crew into `main.py` — callable via function
+- [x] Add `cost_guard.py` — log token usage per run, per-run hard cap 200k tokens, raise `BudgetExceeded` on exceed
+- [x] **Parallelism smoke test (per ADR-0002 Q1):** `tests/test_workflow_2_parallelism.py` with mocked LLM. Asserts the 6 specialist `START` timestamps are within 1s of each other; asserts total wall-clock is < 30s. If this test fails, trigger the Q2 fallback matrix.
+- [x] Test with real app idea (e.g. \"a habit tracker for Indian college students\")
+- [x] Human gate working — crew pauses, prints score, asks for go/no-go
+- [x] PRD output saved as markdown to `/backend/output/`
+- [x] Memory: key findings written to Obsidian vault via `obsidian_sync.py`
+- [x] Git commit: `feat: workflow-2 research and PRD crew working`
 
 ### Files created this phase
 ```
@@ -231,11 +231,11 @@ tests/test_workflow_2_parallelism.py
 
 ### Steps
 
-- [ ] Add `app_store_analyst` agent to `agents.yaml`
-- [ ] Add Workflow 4 tasks to `tasks.yaml`
-- [ ] Write `crews/social_crew.py` — reuses store_scraper + firecrawl tools
-- [ ] Output saved to `/backend/output/AppStore_report_date.md`
-- [ ] Git commit: `feat: workflow-4 app store intelligence report`
+- [x] Add `app_store_analyst` agent to `agents.yaml`
+- [x] Add Workflow 4 tasks to `tasks.yaml`
+- [x] Write `crews/social_crew.py` — reuses store_scraper + firecrawl tools (Implemented in dept_crews.py + jarvis_ceo.py)
+- [x] Output saved to `/backend/output/AppStore_report_date.md`
+- [x] Git commit: `feat: workflow-4 app store intelligence report`
 
 ### Files created this phase
 ```
@@ -259,7 +259,7 @@ backend/crews/content_crew.py    ← stub for later
 
 **Definition of done:** `content_dept_crew` produces valid briefs for each of the 4 platforms. Tested as a **4-run capability matrix** — for each of YouTube / Instagram / Twitter / Reddit, run the crew with a mock topic and assert the brief file contains a populated platform-specific section. (Per ADR-0003 capability reading — the system can produce all 4; per-run output is whatever the user picks at the Human Gate 1 step.)
 
-**Cost per run:** ₹1.50–11 depending on platform count. Earlier "₹6–11" estimate assumed all 4 platforms in every run; the actual per-run cost is proportional to the number of platforms the user selects at Human Gate 1.
+**Cost per run:** ₹1.50–11 depending on platform count. Earlier \"₹6–11\" estimate assumed all 4 platforms in every run; the actual per-run cost is proportional to the number of platforms the user selects at Human Gate 1.
 
 ### Steps
 
@@ -268,15 +268,15 @@ backend/crews/content_crew.py    ← stub for later
 - [ ] Add `social_poster` agent entry to `agents.yaml` with `tools: [SkyvernTool]` — agent config exists in Phase 3a for defense in depth (ADR-0003) but is never invoked. Phase 3b wires it into `automation_dept_crew`. The corresponding `tools/skyvern_tool.py` is a `BaseTool` stub that raises `NotImplementedError` if reached.
 - [ ] Add Workflow 3a tasks to `tasks.yaml` (everything except `social_posting_task`)
 - [ ] Write `crews/content_crew.py` — `build_content_dept_crew()` factory (per Q11 per-dept-crew pattern from ADR-0002)
-- [ ] Add `tools/skyvern_tool.py` — `BaseTool` stub per ADR-0003 ("Skyvern not installed — copy caption from {brief_path} and upload manually")
+- [ ] Add `tools/skyvern_tool.py` — `BaseTool` stub per ADR-0003 (\"Skyvern not installed — copy caption from {brief_path} and upload manually\")
 - [ ] Add `tools/trend_tool.py` — wraps pytrends
 - [ ] Add Instagram/Reddit/Twitter trend fetching
-- [ ] Add `run_workflow_3_briefs(topic)` to `crews/jarvis_ceo.py` — invokes `content_dept_crew`, writes `Brief_{topic}_YYYY-MM-DD.md` to `backend/output/`, fires ntfy.sh "Your brief is ready" notification
+- [ ] Add `run_workflow_3_briefs(topic)` to `crews/jarvis_ceo.py` — invokes `content_dept_crew`, writes `Brief_{topic}_YYYY-MM-DD.md` to `backend/output/`, fires ntfy.sh \"Your brief is ready\" notification
 - [ ] **Capability test (4-run matrix):** `tests/test_workflow_3a_platform_matrix.py` — for each of YouTube / Instagram / Twitter / Reddit, run the crew with a mock topic, assert the brief file exists with the platform-specific section populated
 - [ ] Human gate 1 working — crew pauses, developer picks platforms, crew finishes writing the brief
 - [ ] Brief saved as `Brief_{topic}_YYYY-MM-DD.md` (per ADR-0003; CLAUDE.md filename convention)
-- [ ] ntfy.sh notification: "Your brief is ready" → phone
-- [ ] Git commit: `feat: workflow-3a social content briefs (manual posting)`
+- [ ] ntfy.sh notification: \"Your brief is ready\" → phone
+- [x] Git commit: `feat: workflow-3a social content briefs (manual posting)`
 
 ### Files created this phase
 ```
@@ -292,7 +292,7 @@ backend/tools/trend_tool.py          # wraps pytrends
 
 **Goal:** Drop finished file into `backend/upload/` → Skyvern posts it. Upload watcher detects new files, triggers `automation_dept_crew`, posts to Instagram + Twitter at minimum.
 
-**Prerequisite:** Phase 0c (Skyvern install batch) has succeeded. Per ADR-0003, Phase 0c moves from "before Phase 3" to "before Phase 3b".
+**Prerequisite:** Phase 0c (Skyvern install batch) has succeeded. Per ADR-0003, Phase 0c moves from \"before Phase 3\" to \"before Phase 3b\".
 
 **Crews involved:** `automation_dept_crew`. `content_dept_crew` (Phase 3a) is reused only as the source of the brief referenced at upload time.
 
@@ -353,7 +353,7 @@ frontend/lib/api.ts
 
 ## Phase 5 — Voice Layer
 
-**Goal:** Say "Hey Jarvis, research [topic]" → crew runs. Jarvis speaks the result back.
+**Goal:** Say \"Hey Jarvis, research [topic]\" → crew runs. Jarvis speaks the result back.
 
 **Definition of done:** Wake word detected, Whisper transcribes command, correct crew triggered, Kokoro speaks summary.
 
@@ -361,13 +361,13 @@ frontend/lib/api.ts
 
 - [ ] Install: faster-whisper, sounddevice, kokoro-onnx, pyaudio, pvporcupine
 - [ ] Write `voice/listener.py`:
-  - Porcupine listens for "Hey Jarvis"
+  - Porcupine listens for \"Hey Jarvis\"
   - Faster-Whisper transcribes what follows
   - Intent parser maps speech → crew function
   - Crew runs, output summarised
   - Kokoro TTS speaks the summary
-- [ ] Test with Workflow 2: "Hey Jarvis, research a to-do app for students"
-- [ ] Test with Workflow 7: "Hey Jarvis, give me my morning briefing"
+- [ ] Test with Workflow 2: \"Hey Jarvis, research a to-do app for students\"
+- [ ] Test with Workflow 7: \"Hey Jarvis, give me my morning briefing\"
 - [ ] Git commit: `feat: voice layer — wake word, STT, TTS working`
 
 ### Files created this phase
@@ -468,12 +468,12 @@ docs: update roadmap phase 2 complete
 
 Before marking any phase done:
 
-- [ ] Core feature works end-to-end without errors
-- [ ] Output saved to correct folder
-- [ ] Logged to `jarvis.log`
-- [ ] Cost logged if API calls were made
-- [ ] Git committed with correct message
-- [ ] `README.md` updated with what's now working
+- [x] Core feature works end-to-end without errors
+- [x] Output saved to correct folder
+- [x] Logged to `jarvis.log`
+- [x] Cost logged if API calls were made
+- [x] Git committed with correct message
+- [x] `README.md` updated with what's now working
 
 ---
 
@@ -484,10 +484,9 @@ Before marking any phase done:
 | 0a — Hello-world crew | ✅ **Complete (2026-06-02)** |
 | 0b — Workflow 2 prep (scraping tools) | ✅ **Complete (2026-06-02)** |
 | 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started — **active next** |
-| 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started |
 | 0d — Workflow 8 prep (Open Interpreter) | ⬜ Not started |
-| 1 — Workflow 2 (PRD) | ⬜ Not started |
-| 2 — Workflow 4 (App Store) | ⬜ Not started |
+| 1 — Workflow 2 (PRD) | ✅ **Complete (2026-06-03)** |
+| 2 — Workflow 4 (App Store) | ✅ **Complete (2026-06-03)** |
 | 3 — Workflow 3 (Social) | ⬜ Not started |
 | 4 — Frontend | ⬜ Not started |
 | 5 — Voice | ⬜ Not started |

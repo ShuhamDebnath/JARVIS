@@ -43,6 +43,7 @@ from backend.crews.dept_crews import (
     _TASKS_YAML,
     build_product_dept_crew,
     build_research_dept_crew,
+    build_intelligence_dept_crew,
     run_research_crew_with_retry,
 )
 from backend.orchestrator.human_gate import (
@@ -167,6 +168,25 @@ def _write_prd(topic_slug: str, prd_markdown: str) -> Path:
     return path
 
 
+def _write_intelligence_report(topic_slug: str, report_markdown: str) -> Path:
+    """Write the Intelligence Report to backend/output/AppStore_{topic}_{YYYY-MM-DD}.md.
+
+    Per CLAUDE.md "Output Files": always APPEND, never OVERWRITE.
+    """
+    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    base = _OUTPUT_DIR / f"AppStore_{topic_slug}_{today}.md"
+    path = base
+    n = 1
+    while path.exists():
+        path = base.with_name(f"{base.stem}-{n}{base.suffix}")
+        n += 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(report_markdown)
+    log.info("jarvis_ceo: wrote Intelligence Report to %s (%d chars)", path, len(report_markdown))
+    return path
+
+
 def _extract_research_brief(crew_output: Any) -> str:
     """Pull the research brief (consolidation task's output) from a crew result.
 
@@ -227,7 +247,7 @@ def _build_single_task_crew(
 ) -> Crew:
     """Build a single-task Crew (used for "scoring only" and "PRD only").
 
-    The default `build_product_dept_crew()` returns a Crew with BOTH
+    The default `build_product_dept_crew()` returns a Crew bears BOTH
     the scoring and prd_writing tasks. The CEO needs to pause
     between them for the human gate (per ADR-0000 Q3), so it builds
     two single-task crews instead — one per phase.
@@ -257,6 +277,7 @@ def _build_single_task_crew(
     manager_key_map = {
         "Product Department Director": "product_director",
         "Research Department Director": "research_director",
+        "Intelligence Department Director": "intelligence_director",
     }
     manager_key = manager_key_map.get(manager_agent_role)
     if manager_key is None:
@@ -635,4 +656,97 @@ async def run_workflow_2(
         # Always close the cost-guard window — success, failure,
         # or cancellation. end_run() is a no-op if the run_id is
         # unknown (defensive).
+        end_run(run_id)
+
+
+async def run_workflow_4(
+    category: str,
+    run_id: Optional[str] = None,
+) -> dict:
+    """Run the App Store Intelligence workflow for one category.
+
+    Entry point for Phase 2 Workflow 4.
+    """
+    run_id = run_id or new_run_id()
+    log.info("run_workflow_4 START — run_id=%s category=%r", run_id, category)
+    
+    write_run_status(
+        run_id, RunStatus.STARTED,
+        note=f"category={category!r}",
+        meta={"category": category},
+    )
+
+    start_run(run_id, max_tokens=DEFAULT_MAX_TOKENS_PER_RUN)
+    try:
+        # Build crew
+        try:
+            crew = build_intelligence_dept_crew()
+        except Exception as e:
+            log.error("run_workflow_4: failed to build intelligence_dept_crew: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"intelligence_crew_build_failed: {e}",
+                meta={"reason": "intelligence_crew_build_failed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "intelligence_crew_build_failed",
+                "error": str(e),
+            }
+
+        # Kickoff
+        try:
+            output = crew.kickoff(inputs={"category": category})
+        except BudgetExceeded as e:
+            log.error("run_workflow_4: budget exceeded: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded",
+                meta={"reason": "budget_exceeded"},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "budget_exceeded",
+            }
+        except Exception as e:
+            log.error("run_workflow_4: intelligence crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"intelligence_crew_crashed: {e}",
+                meta={"reason": "intelligence_crew_crashed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "intelligence_crew_crashed",
+                "error": str(e),
+            }
+
+        # Save output
+        report_markdown = str(output)
+        topic_slug = _slugify_topic(category)
+        report_path = _write_intelligence_report(topic_slug, report_markdown)
+        
+        write_run_status(
+            run_id, RunStatus.INTELLIGENCE_COMPLETE,
+            note=f"Intelligence report written to {report_path.name}",
+            meta={
+                "report_path": str(report_path),
+                "report_chars": len(report_markdown),
+            },
+        )
+        write_run_status(
+            run_id, RunStatus.COMPLETE,
+            note="Workflow 4 finished successfully",
+        )
+        
+        return {
+            "run_id": run_id,
+            "status": "complete",
+            "report_path": str(report_path),
+            "report_chars": len(report_markdown),
+        }
+    finally:
         end_run(run_id)

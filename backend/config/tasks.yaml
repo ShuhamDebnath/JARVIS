@@ -362,3 +362,43 @@ product_prd_writing_task:
   # the CEO's `kickoff(inputs={"research_brief": ...})` call — see
   # ADR-0000 Q3.
   context: [ product_opportunity_scoring_task ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 2 — WORKFLOW 4 (App Store Intelligence)
+# ─────────────────────────────────────────────────────────────────────────────
+
+app_store_analysis_task:
+  description: >
+    Analyze the following app category: {category}.
+    1. Find the top 10 competing apps in this category.
+    2. Read their reviews to extract the top 5 most common user complaints.
+    3. Identify 3 missing features that users are begging for.
+
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass a 
+      single, flat JSON dictionary with plain string values. 
+      NEVER enclose your Action Input inside a list or square brackets `[]`. 
+    Example of VALID tool input: {{"query": "finance apps", "limit": 10}}
+  expected_output: >
+    A detailed markdown report containing the top 10 competitors, top 5
+    user complaints, and 3 missing features for the {category} category.
+  agent: app_store_analyst
+
+intelligence_consolidation_task:
+  description: >
+    Consolidate the App Store Intelligence report for the {category} 
+    category.
+    You have received a detailed analysis from your analyst. 
+    Synthesise into a high-impact executive summary using this format:
+    - Market Overview: (ranked top 10 list)
+    - Critical Pain Points: (top 5 complaints)
+    - Opportunity Gaps: (the 3 missing features)
+    - Strategy Recommendation: (one-sentence actionable advice)
+    
+    CRITICAL INSTRUCTION: You already have all the information from your
+        analyst in your context. DO NOT use any tools for this task. You must
+        immediately output your Final Answer containing the unified markdown report.
+  expected_output: >
+    A structured executive intelligence report in the exact format 
+    specified. No watered-down summaries.
+  agent: intelligence_director
+  context: [ app_store_analysis_task ]

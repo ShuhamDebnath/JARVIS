@@ -124,6 +124,15 @@ _PRODUCT_TASK_KEYS: list[str] = [
     "product_prd_writing_task",          # sync — only runs if user approved
 ]
 
+_INTELLIGENCE_AGENT_KEYS: list[str] = [
+    "intelligence_director",      # manager_agent of intelligence_dept_crew
+    "app_store_analyst",
+]
+_INTELLIGENCE_TASK_KEYS: list[str] = [
+    "app_store_analysis_task",           # sync (first worker)
+    "intelligence_consolidation_task",    # sync (consolidation)
+]
+
 # Max attempts for the manual Pydantic retry fallback (per ADR-0002 Q6).
 # The first attempt counts as 1, so max_retries=3 means 1 + 2 retries.
 # This number matches `max_retries: 3` in tasks.yaml. If the YAML
@@ -893,3 +902,66 @@ def run_research_crew_with_retry(
         errors=errors,
         transcripts=transcripts,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public factory: intelligence_dept_crew
+# ---------------------------------------------------------------------------
+def build_intelligence_dept_crew(
+    llm: Any = None,
+    task_callback: Any = None,
+) -> Crew:
+    """Build the intelligence_dept_crew from YAML config.
+
+    Returns a `crewai.Crew` with:
+      - 2 agents: intelligence_director (manager_agent) +
+        app_store_analyst
+      - 2 tasks: analysis (sync) + consolidation (sync)
+      - process = Process.hierarchical
+      - manager_agent = intelligence_director
+    """
+    agents_cfg = _load_yaml(_AGENTS_YAML)
+    tasks_cfg = _load_yaml(_TASKS_YAML)
+
+    agents: dict[str, Agent] = {
+        key: _build_agent(key, agents_cfg, llm=llm)
+        for key in _INTELLIGENCE_AGENT_KEYS
+    }
+
+    task_dict: dict[str, Task] = {}
+    for task_key in _INTELLIGENCE_TASK_KEYS:
+        task_cfg = tasks_cfg[task_key]
+        agent_key = task_cfg["agent"]
+        task_dict[task_key] = _build_task(
+            task_key, tasks_cfg, agents[agent_key],
+            built_tasks=task_dict,
+        )
+
+    # Re-wire context explicitly (idempotent safety).
+    for task_key, task in task_dict.items():
+        context_keys = tasks_cfg[task_key].get("context", []) or []
+        if context_keys:
+            task.context = [task_dict[k] for k in context_keys]
+
+    tasks: list[Task] = list(task_dict.values())
+
+    _manager_key = "intelligence_director"
+    worker_agents = [a for k, a in agents.items() if k != _manager_key]
+    crew_kwargs: dict[str, Any] = {
+        "agents": worker_agents,
+        "tasks": tasks,
+        "process": Process.hierarchical,
+        "manager_agent": agents[_manager_key],
+        "verbose": True,
+    }
+    if task_callback is not None:
+        crew_kwargs["task_callback"] = task_callback
+
+    crew = Crew(**crew_kwargs)
+    log.info(
+        "intelligence_dept_crew built: %d workers, %d tasks, "
+        "process=Process.hierarchical, manager_agent=intelligence_director, "
+        "memory=OMITTED (CrewAI default False)",
+        len(worker_agents), len(tasks),
+    )
+    return crew

@@ -50,6 +50,7 @@ class RunStatus(str, Enum):
     """
     STARTED = "started"
     RESEARCH_COMPLETE = "research_complete"
+    INTELLIGENCE_COMPLETE = "intelligence_complete"
     SCORING_COMPLETE = "scoring_complete"
     AWAITING_HUMAN = "awaiting_human"
     HUMAN_APPROVED = "human_approved"
