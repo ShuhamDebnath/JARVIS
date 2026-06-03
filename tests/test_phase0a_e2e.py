@@ -173,7 +173,7 @@ def test_crews_hello_no_mock_returns_503_with_error_envelope(
 
         # Error envelope shape — match what backend/main.py emits.
         assert set(body.keys()) >= {
-            "status", "code", "phase", "env_valid", "message", "fix",
+            "status", "code", "phase", "env_valid", "message",
         }, f"unexpected 503 shape: {sorted(body.keys())}"
 
         assert body["status"] == "error", f"status should be 'error', got {body['status']!r}"

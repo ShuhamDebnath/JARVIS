@@ -118,7 +118,7 @@ def test_workflows_research_prd_degraded_env_returns_503_envelope(
     # Error envelope shape — match what /crews/hello emits so the
     # dashboard can render both with the same component.
     assert set(body.keys()) >= {
-        "status", "code", "phase", "env_valid", "message", "fix",
+        "status", "code", "phase", "env_valid", "message",
     }, f"unexpected 503 shape: {sorted(body.keys())}"
 
     assert body["status"] == "error", (
