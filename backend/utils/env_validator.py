@@ -25,6 +25,15 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Phase 5: Import the shared Jarvis logger so the validator can
+# emit a structured warning that lands in backend/logs/jarvis.log
+# (in addition to the print()-based report above). We import the
+# logger lazily here to avoid a circular import with main.py during
+# early startup.
+from backend.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 # Placeholder strings the .env.example uses. If a key holds one of these,
 # it's effectively missing — the user copied .env.example without filling in.
 _PLACEHOLDERS = {
@@ -111,7 +120,7 @@ def validate_env() -> bool:
     # Required keys — fail the validation if any are missing/placeholder.
     for key in REQUIRED_KEYS:
         value = os.environ.get(key)
-        if _is_placeholder(value):
+        if value is None or _is_placeholder(value):
             print(f"  [MISSING]  {key:<22}  — required for Phase 0a")
             all_ok = False
         else:
@@ -121,18 +130,40 @@ def validate_env() -> bool:
     # Warn keys — present a warning but do not fail the validation.
     for key in WARN_KEYS:
         value = os.environ.get(key)
-        if _is_placeholder(value):
+        if value is None or _is_placeholder(value):
             print(f"  [WARN]     {key:<22}  — not required now, needed later")
         else:
             print(f"  [OK]       {key:<22}  — {value[:4]}***")
 
     # Optional keys — only report; never fail.
+    # Phase 5: PORCUPINE_ACCESS_KEY lands here. Missing it does NOT
+    # block Phases 0-4 — the wake-word listener (Phase 5.1) will
+    # log an error and return False when the user calls it. The
+    # explicit Voice-Layer warning below makes this clear both in
+    # the CLI report AND in backend/logs/jarvis.log.
+    voice_layer_disabled = False
     for key in OPTIONAL_KEYS:
         value = os.environ.get(key)
-        if _is_placeholder(value):
-            print(f"  [SKIP]     {key:<22}  — optional (Phase 5)")
+        if value is None or _is_placeholder(value):
+            if key == "PORCUPINE_ACCESS_KEY":
+                print(f"  [SKIP]     {key:<22}  — Voice Layer (Phase 5) DISABLED")
+                voice_layer_disabled = True
+            else:
+                print(f"  [SKIP]     {key:<22}  — optional (Phase 5)")
         else:
             print(f"  [OK]       {key:<22}  — {value[:4]}***")
+
+    # If the wake-word key is missing, surface a structured WARNING
+    # in the Jarvis log so the operator sees it during the FastAPI
+    # lifespan startup (not just the one-off CLI report). The log
+    # line points the operator at the fix.
+    if voice_layer_disabled:
+        logger.warning(
+            "PORCUPINE_ACCESS_KEY is missing — Voice Layer (Phase 5) is "
+            "disabled. Phases 0-4 keep working normally. Get a free key at "
+            "https://console.picovoice.ai/ and add it to .env as "
+            "PORCUPINE_ACCESS_KEY to enable 'Hey Jarvis' wake word detection."
+        )
 
     print("-" * 60)
     if all_ok:

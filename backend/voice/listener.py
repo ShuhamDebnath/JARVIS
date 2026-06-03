@@ -80,25 +80,167 @@ class JarvisVoiceCore:
     def listen_for_wake_word(self) -> bool:
         """Listen for the Porcupine "Hey Jarvis" wake word.
 
-        Stub behaviour (Phase 5.0): returns False immediately so the
-        orchestration loop can be wired and tested without an actual
-        microphone stream. The real implementation will:
-            1. Load the Picovoice access key from .env
-               (`PICOVOICE_ACCESS_KEY`).
-            2. Construct a `pvporcupine.create(keywords=["jarvis"])`.
-            3. Open a sounddevice InputStream at the porcupine frame
-               length (typically 512 samples at 16 kHz).
-            4. Spin until the keyword is detected, then return True.
-            5. Tear down the stream in a `finally:` so a Ctrl-C does
-               not leave the mic held open.
+        Live implementation (Phase 5.1). On success, the audio stream
+        and Porcupine handle are torn down before returning, so a
+        follow-up call to `record_ambient_speech()` opens a fresh
+        stream with no contention.
+
+        Flow:
+            1. Read PORCUPINE_ACCESS_KEY from the environment. If it
+               is missing or still holds a `.env.example` placeholder,
+               log an ERROR and return False — the voice layer is
+               degraded, but Phases 0-4 keep working.
+            2. Initialise `pvporcupine.create(access_key=key,
+               keywords=["jarvis"])`. The built-in `jarvis` keyword
+               ships with the pvporcupine wheel; no custom .ppn file
+               is needed for v1.
+            3. Open a `sounddevice.RawInputStream` whose `samplerate`,
+               `channels`, and `blocksize` EXACTLY match the Porcupine
+               instance. A mismatch will make `porcupine.process()`
+               raise at the first call.
+            4. Loop: read one frame, call `porcupine.process(pcm)`. If
+               the returned keyword index is >= 0, the wake word fired.
+            5. Cleanup: in `finally:`, close the stream and call
+               `porcupine.delete()` to release native handles — even
+               on Ctrl-C or an unexpected exception.
 
         Returns:
-            True  → the wake word was heard (caller should now call
-                    `record_ambient_speech` then `transcribe_audio_to_text`).
-            False → the loop was asked to stop before the wake word fired.
+            True  → wake word heard; stream and Porcupine are cleaned
+                    up before returning so the caller can open a new
+                    stream for the actual command.
+            False → no key, interruption, or runtime error. The
+                    wake-word loop is NOT running after the call
+                    either way (`is_listening` is reset in `finally`).
         """
-        logger.debug("listen_for_wake_word: stub — returning False")
-        return False
+        # Lazy imports — keeps this module importable in headless /
+        # CI environments where pvporcupine + sounddevice are present
+        # but no audio device is reachable.
+        import os
+        import pvporcupine
+        import sounddevice as sd
+
+        # Step 1 — read the access key. We use PORCUPINE_ACCESS_KEY
+        # to match the rest of the project (`.env.example`,
+        # `env_validator.py`). Picovoice is the company; Porcupine
+        # is the product — they share the same key.
+        raw_key = os.environ.get("PORCUPINE_ACCESS_KEY", "")
+        # Strip whitespace and reject anything that still looks like
+        # the `.env.example` placeholder (covers `your_*` and
+        # `replace_me_with_*` patterns without hard-coding either).
+        access_key = raw_key.strip()
+        is_placeholder = (
+            not access_key
+            or access_key.startswith("your_")
+            or "replace_me" in access_key
+        )
+        if is_placeholder:
+            logger.error(
+                "listen_for_wake_word: PORCUPINE_ACCESS_KEY is missing or still a "
+                ".env.example placeholder. Get a free key at "
+                "https://console.picovoice.ai/ and add it to .env. "
+                "Voice Layer (Phase 5) is disabled until then — wake word "
+                "detection will return False."
+            )
+            return False
+
+        # Step 2/3 — open the Porcupine handle and a matching audio
+        # stream. The variables are declared above the `try` so the
+        # `finally` cleanup can see them and skip when None.
+        porcupine = None
+        stream = None
+        try:
+            # Built-in "jarvis" keyword — no custom .ppn file needed
+            # for v1. Phase 5.2 can swap to a custom "Hey Jarvis"
+            # phrase via `keyword_paths=[...]` without changing
+            # anything else in this method.
+            porcupine = pvporcupine.create(
+                access_key=access_key,
+                keywords=["jarvis"],
+            )
+
+            # The Porcupine constructor returns a handle whose
+            # `sample_rate` and `frame_length` are the EXACT values
+            # the audio stream must use. Mismatches surface as a
+            # `ValueError` from `porcupine.process()` on the first
+            # frame.
+            #
+            # Channels is hardcoded to 1 because Porcupine is
+            # mono-only — pvporcupine 4.x does not expose a channel
+            # count attribute. Verified at runtime via
+            # `dir(pvporcupine.Porcupine)` (only `frame_length`
+            # and `sample_rate` are present).
+            stream = sd.RawInputStream(
+                samplerate=porcupine.sample_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=porcupine.frame_length,
+            )
+            stream.start()
+
+            self.is_listening = True
+            logger.info(
+                "Wake-word loop started — rate=%d Hz, channels=1, frame=%d. "
+                "Say 'jarvis' to trigger.",
+                porcupine.sample_rate, porcupine.frame_length,
+            )
+
+            # Step 4 — read one frame at a time and feed Porcupine.
+            # `stream.read(frame_length)` blocks until exactly that
+            # many frames are available (because blocksize==frame_length).
+            while True:
+                pcm_bytes, overflow = stream.read(porcupine.frame_length)
+                if overflow:
+                    # Non-fatal — sounddevice drops a few samples
+                    # under load. Log so the operator can spot a
+                    # CPU-starved host.
+                    logger.warning("Audio buffer overflow — some samples dropped.")
+
+                # `bytes(...)` copies the buffer out of sounddevice's
+                # internal memory so Porcupine can read it after the
+                # next read() call. Without the copy, the second
+                # read() would clobber the first.
+                keyword_index = porcupine.process(bytes(pcm_bytes))
+
+                if keyword_index >= 0:
+                    # Step 5 — wake word fired. We log, then return
+                    # True. The `finally` block tears down the stream
+                    # and Porcupine handle so the next phase of the
+                    # voice flow (record_ambient_speech) can open its
+                    # own stream on a free device.
+                    logger.info("Wake word detected! (keyword_index=%d)", keyword_index)
+                    return True
+
+        except KeyboardInterrupt:
+            # User pressed Ctrl-C. Fall through to cleanup. Returning
+            # False lets the caller treat this the same as a normal
+            # "no detection" exit and decide whether to retry.
+            logger.info("Wake-word loop interrupted by user (Ctrl-C).")
+            return False
+        except Exception as e:
+            # Any other failure (no microphone permission, invalid
+            # access key, device busy) lands here. Log the full
+            # traceback for debugging and return False so the
+            # caller can degrade gracefully.
+            logger.error("listen_for_wake_word: unexpected error — %s", e, exc_info=True)
+            return False
+        finally:
+            # Always release native handles, even on exception or
+            # Ctrl-C. Order: stream first (it holds the mic), then
+            # Porcupine (it talks to the stream). Each cleanup is
+            # wrapped because a partial-init failure can leave
+            # either of them `None`.
+            self.is_listening = False
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception as cleanup_err:
+                    logger.warning("Failed to close audio stream cleanly: %s", cleanup_err)
+            if porcupine is not None:
+                try:
+                    porcupine.delete()
+                except Exception as cleanup_err:
+                    logger.warning("Failed to delete porcupine handle cleanly: %s", cleanup_err)
 
     # ------------------------------------------------------------------
     # Ambient microphone capture (sounddevice / pyaudio)
