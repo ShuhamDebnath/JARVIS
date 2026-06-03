@@ -59,6 +59,7 @@ Ignore workspace layout settings but track actual markdown notes
 obsidian-vault/.obsidian/workspace
 obsidian-vault/.obsidian/workspace.json
 obsidian-vault/.obsidian/workspace-mobile.json
+obsidian-vault/runs/
 
 -------------------------------------------------------------------------
 
@@ -90,3 +91,8 @@ OS Generated Files
 ehthumbs.db
 Thumbs.db.idea/
 .idea
+
+
+
+temp/
+logs/

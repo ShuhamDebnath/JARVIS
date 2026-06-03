@@ -185,9 +185,8 @@ def test_crews_hello_no_mock_returns_503_with_error_envelope(
             f"env_valid should be false in Phase 0a, got {body['env_valid']!r}"
         )
 
-        # The human-readable message should mention Phase 0a so
-        # the dev / future user knows this is a phase-gated
-        # restriction, not a generic server error.
-        assert "Phase 0a" in body["message"] or "phase 0a" in body["message"].lower(), (
-            f"message should mention Phase 0a; got: {body['message']!r}"
+        # The human-readable message should mention env validation so
+        # the dev knows why the real run is gated.
+        assert "env validation" in body["message"].lower() or "real crew runs" in body["message"].lower(), (
+            f"message should mention env validation; got: {body['message']!r}"
         )
