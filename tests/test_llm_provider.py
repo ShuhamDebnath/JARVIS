@@ -50,7 +50,7 @@ def test_minimax_prefix_is_translated_to_openai_provider():
         f"expected the provider to be `openai` (LiteLLM's "
         f"OpenAI-compatible code path); got {provider!r}"
     )
-    assert api_base and "minimax.chat" in api_base, (
+    assert api_base and "minimax.io" in api_base, (
         f"expected the api_base to point at the MiniMax API; "
         f"got {api_base!r}"
     )

@@ -343,8 +343,17 @@ async def run_workflow_2(
     start_run(run_id, max_tokens=DEFAULT_MAX_TOKENS_PER_RUN)
     try:
         # ---- Step 1: Research dept crew ----------------------------------
+        # Per P1.15 Action 2: we pass the FACTORY (not a pre-built
+        # crew) into run_research_crew_with_retry so a fresh Crew
+        # instance is built on every retry attempt. Re-kicking off
+        # the same hierarchical crew object mutates its
+        # manager_agent state and produces "Manager agent should
+        # not have tools" on attempt 2+ (a known CrewAI 0.86.0
+        # stateful-crew quirk). Build errors are deterministic so
+        # we surface them once at the top — no retry budget burned
+        # on a YAML/Pydantic typo.
         try:
-            research_crew = build_research_dept_crew()
+            build_research_dept_crew()  # build-once smoke check
         except Exception as e:
             log.error("run_workflow_2: failed to build research_dept_crew: %s", e, exc_info=True)
             write_run_status(
@@ -361,8 +370,8 @@ async def run_workflow_2(
 
         try:
             research_output = run_research_crew_with_retry(
-                research_crew,
-                inputs={"idea": app_idea},
+                build_research_dept_crew,
+                inputs={"app_idea": app_idea},
             )
         except InterpretationValidationError as e:
             # Update the exception's run_id to the real one (the
