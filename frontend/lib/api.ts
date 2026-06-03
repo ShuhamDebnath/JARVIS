@@ -95,3 +95,21 @@ export interface RunEntry {
   output_file?: string;
   error_message?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Output Viewer (Next.js dashboard → FastAPI)
+// ---------------------------------------------------------------------------
+
+/**
+ * fetchOutput — retrieves a markdown file from backend/output/ via the
+ * FastAPI GET /output/{filename} endpoint.
+ * @param filename  The name of the file (e.g. "PRD_habittracker_2026-06-03.md")
+ * @returns The file content string
+ * @throws Error if the file is not found or the request fails
+ */
+export async function fetchOutput(filename: string): Promise<string> {
+  const data = await request<{ filename: string; content: string }>(
+    `/output/${encodeURIComponent(filename)}`
+  );
+  return data.content;
+}

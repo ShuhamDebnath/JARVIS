@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import json
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -382,6 +382,44 @@ async def start_auto_post(
             "platform": req.platform,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /output/{filename} — Phase 4 output file serving (Next.js dashboard)
+# ---------------------------------------------------------------------------
+
+@app.get("/output/{filename}")
+def get_output_file(filename: str) -> JSONResponse:
+    """Serve a markdown file from backend/output/.
+
+    Used by the Phase 4 Next.js OutputViewer to read generated reports
+    and briefs directly in the browser.
+
+    Security: filename is resolved against output_dir and must not escape it
+    (no "../" traversal). Raises 404 if file does not exist.
+    """
+    output_dir = Path(__file__).parent.parent / "output"
+    target = output_dir / filename
+
+    # Resolve and validate — prevents path traversal attacks
+    try:
+        resolved = target.resolve()
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not resolved.is_relative_to(output_dir):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("GET /output/%s: failed to read — %s", filename, e)
+        raise HTTPException(status_code=500, detail="Could not read file")
+
+    return JSONResponse(content={"filename": filename, "content": text})
 
 
 # ---------------------------------------------------------------------------
