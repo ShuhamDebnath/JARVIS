@@ -533,3 +533,19 @@ brief_consolidation_task:
     hooks, angles, hashtags, and posting times.
   agent: content_director
   context: [ trend_scanning_task, trend_analysis_task, viral_idea_generation_task, community_angle_task ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3b — WORKFLOW 3b (Auto-Post — Skyvern automation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+social_posting_task:
+  description: >
+    Read the final content from {brief_path} and use your tools to
+    automatically post it to {platform}.
+    CRITICAL TOOL FORMATTING RULE: When calling your tools, you MUST pass
+    a single, flat JSON dictionary. Example: {{"brief_path": "/path/to/brief.md",
+    "platform": "Twitter"}}
+  expected_output: >
+    A confirmation string containing the platform name and the status
+    of the automated post.
+  agent: social_poster

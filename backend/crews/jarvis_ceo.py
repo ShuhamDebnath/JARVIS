@@ -875,3 +875,134 @@ async def run_workflow_3_briefs(
         }
     finally:
         end_run(run_id)
+
+
+async def run_workflow_3_post(
+    brief_path: str,
+    platform: str,
+    run_id: Optional[str] = None,
+) -> dict:
+    """Run the Auto-Post workflow (Workflow 3b) — Skyvern automation.
+
+    Entry point for Phase 3b. Acts as the "Upload Gate":
+      1. Validates the brief file exists
+      2. Opens a cost-guard budget window
+      3. Kicks off automation_dept_crew with inputs
+      4. Closes the budget and returns a status dict
+
+    Args:
+        brief_path: Absolute path to the brief Markdown file produced
+            by run_workflow_3_briefs (Phase 3a).
+        platform: Target social platform (Twitter, Instagram, Reddit, YouTube).
+        run_id: Optional pre-existing run id.
+
+    Returns:
+        A status dict with at least:
+          - run_id: str
+          - status: "complete" | "failed" | "cancelled"
+          - post_confirmation: str (only on complete)
+    """
+    from backend.crews.content_crew import build_automation_dept_crew
+
+    run_id = run_id or new_run_id()
+    log.info(
+        "run_workflow_3_post START — run_id=%s brief=%s platform=%s",
+        run_id, brief_path, platform,
+    )
+
+    write_run_status(
+        run_id, RunStatus.STARTED,
+        note=f"brief_path={brief_path!r} platform={platform!r}",
+        meta={"brief_path": brief_path, "platform": platform},
+    )
+
+    start_run(run_id, max_tokens=DEFAULT_MAX_TOKENS_PER_RUN)
+    try:
+        # Validate brief file exists
+        path = Path(brief_path)
+        if not path.exists():
+            log.error("run_workflow_3_post: brief not found at %s", brief_path)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"brief_not_found: {brief_path}",
+                meta={"reason": "brief_not_found"},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "brief_not_found",
+                "brief_path": brief_path,
+            }
+
+        try:
+            crew = build_automation_dept_crew()
+        except Exception as e:
+            log.error(
+                "run_workflow_3_post: failed to build automation_dept_crew: %s",
+                e, exc_info=True,
+            )
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"automation_crew_build_failed: {e}",
+                meta={"reason": "automation_crew_build_failed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "automation_crew_build_failed",
+                "error": str(e),
+            }
+
+        try:
+            output = crew.kickoff(
+                inputs={"brief_path": str(path.resolve()), "platform": platform},
+            )
+        except BudgetExceeded as e:
+            log.error("run_workflow_3_post: budget exceeded: %s", e)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note="budget_exceeded",
+                meta={"reason": "budget_exceeded"},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "budget_exceeded",
+            }
+        except Exception as e:
+            log.error("run_workflow_3_post: automation crew crashed: %s", e, exc_info=True)
+            write_run_status(
+                run_id, RunStatus.FAILED,
+                note=f"automation_crew_crashed: {e}",
+                meta={"reason": "automation_crew_crashed", "error": str(e)},
+            )
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "reason": "automation_crew_crashed",
+                "error": str(e),
+            }
+
+        post_confirmation = str(output)
+        log.info(
+            "run_workflow_3_post COMPLETE — run_id=%s confirmation=%s",
+            run_id, post_confirmation,
+        )
+        write_run_status(
+            run_id, RunStatus.COMPLETE,
+            note=f"Post confirmed: {post_confirmation[:60]}",
+            meta={
+                "post_confirmation": post_confirmation,
+                "brief_path": brief_path,
+                "platform": platform,
+            },
+        )
+        return {
+            "run_id": run_id,
+            "status": "complete",
+            "post_confirmation": post_confirmation,
+            "brief_path": str(path.resolve()),
+            "platform": platform,
+        }
+    finally:
+        end_run(run_id)

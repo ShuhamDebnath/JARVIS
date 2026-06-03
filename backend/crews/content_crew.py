@@ -201,16 +201,61 @@ def build_content_dept_crew(llm: Any = None, task_callback: Any = None) -> Crew:
 def build_automation_dept_crew(llm: Any = None, task_callback: Any = None) -> Crew:
     """Build the automation_dept_crew for Phase 3b Skyvern auto-posting.
 
-    Phase 3a: raises NotImplementedError (Skyvern not installed).
-    Phase 3b: replaces stub with real Skyvern-backed implementation.
+    Uses:
+      - manager_agent: automation_director (dept head)
+      - worker agent: social_poster (specialist that calls SkyvernTool)
+      - task: social_posting_task
+      - process: Process.hierarchical (per ADR-0000 Q2)
 
-    The stub exists so that `social_poster` agent in agents.yaml can
-    reference `tools: [SkyvernTool]` without breaking Phase 3a loads.
-    If accidentally invoked in Phase 3a, SkyvernTool._run raises
-    NotImplementedError with a clear message (per ADR-0003).
+    The social_poster agent carries `max_iter=3` (via _build_agent) so
+    transient Skyvern errors are retried before the crew fails.
+
+    Args:
+        llm: Optional LLM override (e.g. in tests). Production: None.
+        task_callback: Optional task callback for crew callbacks.
+
+    Returns:
+        A `crewai.Crew` with 1 manager + 1 specialist + 1 task,
+        process=Process.hierarchical, no memory kwarg.
     """
-    raise NotImplementedError(
-        "Phase 3b prerequisite not met: Skyvern not installed. "
-        "Run Phase 0c (Skyvern install batch) before using automation_dept_crew. "
-        "For now: copy caption from the brief and post manually."
+    agents_cfg = _load_yaml(_AGENTS_YAML)
+    tasks_cfg = _load_yaml(_TASKS_YAML)
+
+    # Build both agents via the factory
+    agents = {
+        key: _build_agent(key, agents_cfg, llm=llm)
+        for key in _AUTOMATION_AGENT_KEYS
+    }
+
+    # Build the single task
+    task_dict: dict[str, Task] = {}
+    for task_key in _AUTOMATION_TASK_KEYS:
+        task_cfg = tasks_cfg[task_key]
+        agent_key = task_cfg["agent"]
+        task_dict[task_key] = _build_task(
+            task_key, tasks_cfg, agents[agent_key],
+            built_tasks=task_dict,
+        )
+
+    tasks = list(task_dict.values())
+    _manager_key = "automation_director"
+    worker_agents = [a for k, a in agents.items() if k != _manager_key]
+
+    crew_kwargs: dict[str, Any] = {
+        "agents": worker_agents,
+        "tasks": tasks,
+        "process": Process.hierarchical,
+        "manager_agent": agents[_manager_key],
+        "verbose": True,
+    }
+    if task_callback is not None:
+        crew_kwargs["task_callback"] = task_callback
+
+    crew = Crew(**crew_kwargs)
+    log.info(
+        "automation_dept_crew built: %d workers, %d tasks, "
+        "process=Process.hierarchical, manager_agent=automation_director, "
+        "memory=OMITTED (CrewAI default False)",
+        len(worker_agents), len(tasks),
     )
+    return crew

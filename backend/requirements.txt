@@ -102,3 +102,13 @@ beautifulsoup4==4.14.3
 # step). The Python wheel pulls in pytest-playwright transitively only if
 # requested, so we keep the pin explicit.
 playwright==1.60.0
+
+# ----------------------------------------------------------------------------
+# Phase 3b — Automation (Skyvern + PyAutoGUI)
+# ----------------------------------------------------------------------------
+# skyvern>=1.0.0 — browser automation for social posting. BROWSER_API_KEY
+# required. Falls back to logging-only mode if key not set (graceful deg).
+skyvern==1.0.37
+# pyautogui>=0.9.54 — cross-platform GUI automation (used as fallback
+# when Skyvern is unavailable or unconfigured).
+pyautogui==0.9.54

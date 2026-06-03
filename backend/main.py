@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend.crews.jarvis_ceo import run_workflow_2, run_workflow_3_briefs, run_workflow_4
+from backend.crews.jarvis_ceo import run_workflow_2, run_workflow_3_briefs, run_workflow_3_post, run_workflow_4
 from backend.orchestrator.human_gate import new_run_id
 from backend.utils import llm_provider  # noqa: F401  (P1.15 minimax/ shim — side-effect import)
 from backend.utils.env_validator import validate_env
@@ -326,5 +326,56 @@ async def start_content_briefs(
             "status": "started",
             "phase": getattr(app.state, "phase", "unknown"),
             "topic": req.topic,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /workflows/auto-post — Workflow 3b (Phase 3b)
+# ---------------------------------------------------------------------------
+
+class AutoPostRequest(BaseModel):
+    """Request body for `POST /workflows/auto-post`."""
+    brief_path: str
+    platform: str
+
+
+@app.post("/workflows/auto-post")
+async def start_auto_post(
+    req: AutoPostRequest,
+    background: BackgroundTasks,
+) -> JSONResponse:
+    """Kick off Workflow 3b (Auto-Post) as a background task.
+
+    Reads the brief at `brief_path` and uses Skyvern to post to `platform`.
+    Falls back to logging-only mode if SKYVERN_BROWSER_API_KEY is not set.
+    """
+    env_ok = getattr(app.state, "env_ok", False)
+    if not env_ok:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "code": 503,
+                "phase": getattr(app.state, "phase", "unknown"),
+                "env_valid": env_ok,
+                "message": "Workflow runs require env validation to pass.",
+            },
+        )
+
+    run_id = new_run_id()
+    background.add_task(run_workflow_3_post, req.brief_path, req.platform, run_id)
+    logger.info(
+        "POST /workflows/auto-post: queued run %s brief=%s platform=%s",
+        run_id, req.brief_path, req.platform,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "run_id": run_id,
+            "status": "started",
+            "phase": getattr(app.state, "phase", "unknown"),
+            "brief_path": req.brief_path,
+            "platform": req.platform,
         },
     )

@@ -448,6 +448,24 @@ community_angle_agent:
   memory: false
   verbose: true
 
+# AUTOMATION DIRECTOR — Phase 3b department head
+automation_director:
+  dept: automation_dept
+  role: Automation Department Director
+  goal: >
+    Oversee automated content posting workflows. Coordinates the social
+    poster specialist to ensure content is posted to the correct platform
+    at the right time with the correct caption and hashtags.
+  backstory: >
+    You are the head of the automation department. You coordinate browser
+    automation workflows using Skyvern to post content to social platforms.
+    You ensure every post is accurate, timely, and follows the brief exactly.
+  llm: *default_llm
+  tools: []
+  allow_delegation: true
+  memory: false
+  verbose: true
+
 # SOCIAL POSTER — Phase 3b (stub, NEVER invoked in Phase 3a)
 # Per ADR-0003: this agent exists in Phase 3a for defense in depth but
 # is never wired into `content_dept_crew`. Phase 3b wires it into
