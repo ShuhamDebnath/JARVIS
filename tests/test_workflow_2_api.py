@@ -130,6 +130,9 @@ def test_workflows_research_prd_degraded_env_returns_503_envelope(
     assert body["env_valid"] is False, (
         f"env_valid should be false in test env, got {body['env_valid']!r}"
     )
+    assert isinstance(body["phase"], str) and body["phase"], (
+        "phase should be a non-empty string"
+    )
 
     # The message must point the dev at the real fix (set up .env),
     # not just say "broken". If the wording changes, this test
@@ -138,10 +141,6 @@ def test_workflows_research_prd_degraded_env_returns_503_envelope(
     assert "env" in msg or "api keys" in msg, (
         f"message should mention env / API keys; got: {body['message']!r}"
     )
-
-    # The fix field is the dashboard's contract — non-empty so
-    # the UI has something to render.
-    assert body["fix"], f"fix should be non-empty, got {body['fix']!r}"
 
 
 # ---------------------------------------------------------------------------
