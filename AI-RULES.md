@@ -115,6 +115,31 @@ If I ask for something on this list, flag it and ask if I want to override inten
 
 ---
 
+## Rule 5b — Frontend Architecture (Phase 4+)
+
+The Next.js App Router frontend (`frontend/`) communicates with FastAPI (`backend/`) exclusively through `frontend/lib/api.ts`. Do not call FastAPI directly from React components.
+
+Key integration points:
+- `GET /workflows/runs` → AgentStatus polling panel (5s interval)
+- `GET /output/{filename}` → OutputViewer markdown rendering
+- `POST /workflows/research-prd`, `/app-store-intelligence`, `/content-briefs`, `/auto-post` → WorkflowCard triggers
+
+Typography: `@tailwindcss/typography` is **not** loaded via postcss or CSS `@import` in Tailwind v4 (Next.js 16 / Turbopack). Use `ReactMarkdown components={}` for styled markdown output. See ADR-0004 for details.
+
+---
+
+## Rule 5c — Phase 5 Voice Layer Prerequisites
+
+When Phase 5 starts, Apple Silicon Macs require Homebrew-installed `portaudio` before Python audio libraries can be installed:
+
+```bash
+brew install portaudio
+```
+
+This is required for: faster-whisper, Kokoro TTS, pyaudio, pvporcupine.
+
+---
+
 ## Rule 6 — Response Format
 
 - Use markdown — I read responses in tools that render it

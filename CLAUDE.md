@@ -40,17 +40,19 @@ This is a private single-user system. It is not a SaaS product. There is no auth
 
 > **Update this section every time a phase completes.**
 
-**Active phase:** 🚀 **Phase 4 — Frontend Dashboard.** Phase 0c (Automation Setup) and Phase 3b (Workflow 3b: Auto-Post) are fully shipped. The automation_dept_crew is wired and functional with SkyvernTool fallback (logging-only when SKYVERN_BROWSER_API_KEY is not set).
+**Active phase:** 🚀 **Phase 5 — Voice Layer.** Phase 4 (Frontend Dashboard) is fully shipped. Next.js dashboard running at `http://localhost:3000` with `WorkflowCard`, `AgentStatus`, and `OutputViewer` components.
 
 **Completed phases:**
 - ✅ **Phase 0c (June 2026)** — Automation Setup: skyvern + pyautogui installed, requirements.txt pinned, .env.example updated with SKYVERN_BROWSER_API_KEY.
 - ✅ **Phase 3b (June 2026)** — Workflow 3b Auto-Post: build_automation_dept_crew() implemented, run_workflow_3_post() added to jarvis_ceo.py, POST /workflows/auto-post endpoint wired in FastAPI.
 - ✅ **Phase 1 — COMPLETE.** Phase 1 (Research → PRD Infrastructure and Integration) is fully shipped and verified. All 25 core unit tests pass. Structural fixes for MiniMax reliability (circuit breakers, manual JSON validation, tool formatting rules) are permanently integrated. Phase 1 Workflow 2 (Research → PRD) is now operational with high-reliability Python shims.
 - ✅ **Phase 2 — COMPLETE.** Phase 2 (Intelligence Layer) is fully shipped. Workflow 4 (App Store Intelligence) is operational.
+- ✅ **Phase 3 — COMPLETE.** Phase 3 (Social Content Engine) is fully shipped. Workflow 3a (briefs) and Workflow 3b (auto-post) operational with content_dept_crew and automation_dept_crew.
+- ✅ **Phase 4 — COMPLETE.** Phase 4 (Frontend Dashboard) is fully shipped. Next.js App Router dashboard at `frontend/` with WorkflowCard, AgentStatus (5s polling), OutputViewer (react-markdown with manual dark-theme component overrides). Communication via `frontend/lib/api.ts` typed fetch client → FastAPI on port 8000.
 
-**Currently building:** 🚀 **Phase 4 — Frontend Dashboard.** Next.js App Router dashboard with WorkflowCard components.
+**Currently building:** 🚀 **Phase 5 — Voice Layer.** Faster-Whisper STT, Kokoro TTS, Porcupine wake word "Hey Jarvis". Native `portaudio` required on Apple Silicon (via Homebrew) before Python audio libs can be installed.
 
-**Next phase:** Phase 4 — Frontend Dashboard
+**Next phase:** Phase 5 — Voice Layer
 **Note on the Frontend WorkflowCard rule:** The "How to Add a New Workflow" rule that says "Add a `WorkflowCard` in the frontend dashboard" only applies **starting from Workflow 2** (Phase 1 onward). The Next.js dashboard itself is built in Phase 4, so Phase 0a and Phase 0b do not add `WorkflowCard`s and do not need `ComingSoon` placeholders. The dashboard-facing surface for Phase 0a (`?mock=true` on `/crews/hello`) is the only such contract until Phase 1 lands.
 
 Refer to `docs/roadmap.md` for the full phase breakdown and completion checklist.

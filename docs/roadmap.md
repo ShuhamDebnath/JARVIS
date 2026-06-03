@@ -483,13 +483,13 @@ Before marking any phase done:
 |-------|--------|
 | 0a — Hello-world crew | ✅ **Complete (2026-06-02)** |
 | 0b — Workflow 2 prep (scraping tools) | ✅ **Complete (2026-06-02)** |
-| 0c — Workflow 3 prep (Skyvern, pyautogui) | ⬜ Not started — **active next** |
+| 0c — Workflow 3 prep (Skyvern, pyautogui) | ✅ **Complete (June 2026)** |
 | 0d — Workflow 8 prep (Open Interpreter) | ⬜ Not started |
 | 1 — Workflow 2 (PRD) | ✅ **Complete (2026-06-03)** |
 | 2 — Workflow 4 (App Store) | ✅ **Complete (2026-06-03)** |
-| 3 — Workflow 3 (Social) | ⬜ Not started |
-| 4 — Frontend | ⬜ Not started |
-| 5 — Voice | ⬜ Not started |
+| 3 — Workflow 3 (Social) | ✅ **Complete (June 2026)** |
+| 4 — Frontend (Next.js) | ✅ **Complete (June 2026)** |
+| 5 — Voice | ⬜ Not started — **active next** |
 | 6 — Remaining Workflows | ⬜ Not started |
 | 7 — Scheduling + Docker | ⬜ Not started |
 
