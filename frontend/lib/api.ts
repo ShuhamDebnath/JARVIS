@@ -64,3 +64,34 @@ export const api = {
     });
   },
 };
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Status Polling (Next.js dashboard → FastAPI)
+// ---------------------------------------------------------------------------
+
+/**
+ * fetchWorkflowStatuses — polls GET /workflows/runs for active run state.
+ * Reads backend/state/runs.json and returns the JSON payload.
+ * Logs errors to console instead of crashing the app.
+ */
+export async function fetchWorkflowStatuses(): Promise<Record<string, RunEntry>> {
+  try {
+    const data = await request<Record<string, RunEntry>>("/workflows/runs");
+    return data;
+  } catch (err) {
+    // Graceful degradation — log and return empty object so dashboard stays up
+    console.error("[AgentStatus] Failed to fetch workflow statuses:", err);
+    return {};
+  }
+}
+
+/** Shape of a single run entry inside runs.json */
+export interface RunEntry {
+  status: "queued" | "running" | "done" | "error";
+  app_idea?: string;
+  topic?: string;
+  started_at: string;
+  completed_at?: string;
+  output_file?: string;
+  error_message?: string;
+}

@@ -25,6 +25,9 @@
 
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+import json
+
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -379,3 +382,28 @@ async def start_auto_post(
             "platform": req.platform,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /workflows/runs — Phase 4 status polling (Next.js dashboard)
+# ---------------------------------------------------------------------------
+
+@app.get("/workflows/runs")
+def get_workflow_runs() -> JSONResponse:
+    """Return the current contents of backend/state/runs.json.
+
+    Used by the Phase 4 Next.js dashboard to poll active workflow runs.
+    Gracefully returns {} if the file doesn't exist yet (first run, fresh state).
+    """
+    runs_path = Path(__file__).parent.parent / "state" / "runs.json"
+
+    if not runs_path.exists():
+        return JSONResponse(content={})
+
+    try:
+        with open(runs_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return JSONResponse(content=data)
+    except (json.JSONDecodeError, OSError) as e:  # type: ignore[reportPossiblyUnboundVariable]
+        logger.warning("GET /workflows/runs: failed to read runs.json — %s", e)
+        return JSONResponse(content={})
