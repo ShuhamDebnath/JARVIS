@@ -355,14 +355,17 @@ class JarvisVoiceCore:
     # ------------------------------------------------------------------
 
     def _handle_utterance(self, audio_buffer: np.ndarray) -> None:
-        """Transcribe the buffered audio and react to the transcript.
+        """Transcribe the buffered audio, parse intent, and route.
 
-        For Phase 5.2 this is intentionally minimal — we STT the
-        utterance, log it, and speak a canned acknowledgement back
-        if TTS is enabled. The intent-parser / crew-routing logic
-        lands in a later phase; the contract here is "hand me text,
-        I'll log + speak it" so the rest of the pipeline has a
-        stable integration point.
+        Phase 5.2 updates:
+            1. STT the utterance via mlx-whisper.
+            2. Run the transcript through `parse_voice_intent`.
+            3. On "unknown": TTS an apology and exit.
+            4. On a matched workflow:
+               - auto_execute=False → stage to pending_voice.json,
+                 TTS a confirmation message.
+               - auto_execute=True  → TTS execution notice and log
+                 the routing destination (NO live crew launch yet).
         """
         try:
             text = self.run_stt(audio_buffer)
@@ -373,11 +376,55 @@ class JarvisVoiceCore:
             logger.debug("STT returned empty text — ignoring")
             return
         logger.info("Voice transcript: %r", text)
-        if self.tts_enabled:
-            # Ack with a short canned reply so the operator can
-            # hear the round-trip end-to-end. Real replies come from
-            # the crew summary in a later phase.
-            self.run_tts("Got it.")
+
+        # Phase 5.2: intent parsing
+        try:
+            from backend.voice.intent import parse_voice_intent
+        except Exception as e:
+            logger.error("Failed to import intent parser: %s", e, exc_info=True)
+            if self.tts_enabled:
+                self.run_tts("I had trouble understanding. Please try again.")
+            return
+
+        intent = parse_voice_intent(text)
+        workflow_id = intent.get("workflow_id", "unknown")
+        payload = intent.get("payload", "")
+        workflow_label = f"workflow {workflow_id.replace('workflow_', '')}"
+
+        if workflow_id == "unknown":
+            if self.tts_enabled:
+                self.run_tts("I didn't quite catch which workflow you want to run.")
+            return
+
+        if not self.auto_execute:
+            # Stage the intent on disk for the Next.js dashboard to poll.
+            pending_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..", "state", "pending_voice.json",
+            )
+            try:
+                os.makedirs(os.path.dirname(pending_path), exist_ok=True)
+                import json as _json
+                with open(pending_path, "w") as f:
+                    _json.dump({
+                        "workflow_id": workflow_id,
+                        "payload": payload,
+                        "source_transcript": text,
+                    }, f)
+                logger.info("Pending voice intent staged at %s", pending_path)
+            except Exception as e:
+                logger.error("Failed to write pending_voice.json: %s", e, exc_info=True)
+
+            if self.tts_enabled:
+                self.run_tts(f"Staging {workflow_label} on your dashboard for confirmation.")
+        else:
+            # auto_execute=True: TTS notice only — NO live crew launch.
+            logger.info(
+                "auto_execute=True: would route %s with payload=%r",
+                workflow_id, payload,
+            )
+            if self.tts_enabled:
+                self.run_tts(f"Executing {workflow_label} immediately.")
 
     # ------------------------------------------------------------------
     # STT hook (mlx-whisper)
@@ -418,6 +465,76 @@ class JarvisVoiceCore:
     # TTS hook (mlx-audio / Kokoro-82M-bf16) + afplay
     # ------------------------------------------------------------------
 
+    # def run_tts(self, text: str) -> bool:
+    #     """Synthesise `text` with Kokoro and play it via `afplay` (macOS).
+    #
+    #     Honours `self.tts_enabled` — if the user has muted spoken
+    #     responses, this method is a no-op and returns False. Audio
+    #     is generated to a temp WAV file, played once, then cleaned
+    #     up. Returns True on successful playback, False on any skip /
+    #     failure (the caller should not crash on a TTS error).
+    #     """
+    #     if not self.tts_enabled:
+    #         logger.debug("run_tts: tts_enabled=False — skipping playback")
+    #         return False
+    #     if not text or not text.strip():
+    #         logger.debug("run_tts: empty text — skipping")
+    #         return False
+    #
+    #     try:
+    #         from mlx_audio.tts.generate import generate_audio
+    #     except ImportError as e:
+    #         logger.error("mlx_audio not installed: %s", e)
+    #         return False
+    #
+    #     # mlx_audio generates a wav file at the given output path.
+    #     # We use a NamedTemporaryFile so the file is auto-cleaned if
+    #     # something goes wrong mid-generation.
+    #     tmp = tempfile.NamedTemporaryFile(
+    #         prefix="jarvis_tts_", suffix=".wav", delete=False
+    #     )
+    #     tmp_path = tmp.name
+    #     tmp.close()
+    #     try:
+    #         generate_audio(
+    #             text=text,
+    #             model_path="mlx-community/Kokoro-82M-bf16",
+    #             output_path=tmp_path,
+    #         )
+    #     except Exception as e:
+    #         logger.error("mlx_audio generate_audio failed: %s", e, exc_info=True)
+    #         return False
+    #
+    #     # macOS-only playback. `afplay` ships with the OS so we
+    #     # don't need to bundle anything. `which` check is cheap and
+    #     # surfaces a clearer error on non-mac dev boxes.
+    #     if shutil.which("afplay") is None:
+    #         logger.warning("afplay not found on PATH — generated WAV at %s", tmp_path)
+    #         return False
+    #
+    #     try:
+    #         subprocess.run(
+    #             ["afplay", tmp_path],
+    #             check=True,
+    #             timeout=60,
+    #             capture_output=True,
+    #         )
+    #     except subprocess.TimeoutExpired:
+    #         logger.error("afplay timed out after 60s on %s", tmp_path)
+    #         return False
+    #     except subprocess.CalledProcessError as e:
+    #         logger.error("afplay failed (rc=%d): %s", e.returncode, e.stderr)
+    #         return False
+    #     finally:
+    #         # Best-effort cleanup. If the file is locked (afplay
+    #         # hasn't released it), we just log and move on — the
+    #         # temp dir gets reaped at boot.
+    #         try:
+    #             os.unlink(tmp_path)
+    #         except OSError:
+    #             pass
+    #     return True
+
     def run_tts(self, text: str) -> bool:
         """Synthesise `text` with Kokoro and play it via `afplay` (macOS).
 
@@ -440,50 +557,57 @@ class JarvisVoiceCore:
             logger.error("mlx_audio not installed: %s", e)
             return False
 
-        # mlx_audio generates a wav file at the given output path.
-        # We use a NamedTemporaryFile so the file is auto-cleaned if
-        # something goes wrong mid-generation.
-        tmp = tempfile.NamedTemporaryFile(
-            prefix="jarvis_tts_", suffix=".wav", delete=False
-        )
-        tmp_path = tmp.name
-        tmp.close()
+        # Use a temporary directory to handle whatever filename prefix/suffix variations
+        # the specific version of mlx_audio decides to append.
+        tmp_dir = tempfile.mkdtemp(prefix="jarvis_tts_")
+        prefix_path = os.path.join(tmp_dir, "jarvis_speech")
+
         try:
+            # FIXED PARAMETERS: 'model' instead of 'model_path', and 'file_prefix' instead of 'output_path'
             generate_audio(
+                model="mlx-community/Kokoro-82M-bf16",
                 text=text,
-                model_path="mlx-community/Kokoro-82M-bf16",
-                output_path=tmp_path,
+                voice="af_heart",
+                file_prefix=prefix_path
             )
+
+            # Find the actual .wav file generated inside our temporary directory
+            generated_files = [f for f in os.listdir(tmp_dir) if f.endswith(".wav")]
+            if not generated_files:
+                logger.error("TTS failed: No audio file was generated in the temp directory.")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return False
+
+            audio_file_path = os.path.join(tmp_dir, generated_files[0])
+
         except Exception as e:
             logger.error("mlx_audio generate_audio failed: %s", e, exc_info=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             return False
 
         # macOS-only playback. `afplay` ships with the OS so we
         # don't need to bundle anything. `which` check is cheap and
         # surfaces a clearer error on non-mac dev boxes.
         if shutil.which("afplay") is None:
-            logger.warning("afplay not found on PATH — generated WAV at %s", tmp_path)
+            logger.warning("afplay not found on PATH — generated WAV at %s", audio_file_path)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             return False
 
         try:
             subprocess.run(
-                ["afplay", tmp_path],
+                ["afplay", audio_file_path],
                 check=True,
                 timeout=60,
                 capture_output=True,
             )
         except subprocess.TimeoutExpired:
-            logger.error("afplay timed out after 60s on %s", tmp_path)
+            logger.error("afplay timed out after 60s on %s", audio_file_path)
             return False
         except subprocess.CalledProcessError as e:
             logger.error("afplay failed (rc=%d): %s", e.returncode, e.stderr)
             return False
         finally:
-            # Best-effort cleanup. If the file is locked (afplay
-            # hasn't released it), we just log and move on — the
-            # temp dir gets reaped at boot.
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            # Clean up the entire temporary folder and its contents
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
         return True
